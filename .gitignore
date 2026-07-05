@@ -1,0 +1,8 @@
+.pio
+.vscode/*
+
+# macOS
+.DS_Store
+
+# ESP-IDF menuconfig backups
+sdkconfig.*.old
