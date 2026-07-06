@@ -1,5 +1,6 @@
 #include "ui.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -9,6 +10,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sensors.h"
 #include "settings.h"
 
 // VFD pins (this module is the sole owner of the display)
@@ -29,7 +31,7 @@
 
 static VFDDisplay s_vfd(VFD_CS, VFD_CLK, VFD_DIN, 16);
 
-enum class Page : uint8_t { Time, Date, Count };
+enum class Page : uint8_t { Time, Date, Indoor, Pressure, Count };
 enum class Mode : uint8_t { Pages, Menu, Edit };
 // M2 menu subset; the remaining items (24H, TZ, CYCLE, WIFI RESET) arrive with M7.
 enum MenuItem : int { MI_BRIGHT, MI_EXIT, MI_COUNT };
@@ -72,6 +74,23 @@ static void render_date(char* line) {
              t.tm_mon + 1, t.tm_mday);
 }
 
+static void render_indoor(char* line) {
+    float tC, rh, hPa;
+    if (sensors_get(&tC, &rh, &hPa))
+        snprintf(line, 17, "IN %5.1fC %4.0f%% ", tC, rh);
+    else
+        snprintf(line, 17, "IN  SENSOR ERR  ");
+}
+
+static void render_pressure(char* line) {
+    float tC, rh, hPa;
+    sensors_get(&tC, &rh, &hPa);
+    if (!isnan(hPa))
+        snprintf(line, 17, "PRES %6.1f hPa ", hPa);
+    else
+        snprintf(line, 17, "PRES SENSOR ERR ");
+}
+
 static void render(int64_t now_us) {
     char line[17];
     Settings st = settings_get();
@@ -89,6 +108,8 @@ static void render(int64_t now_us) {
         switch (s_page) {
             case Page::Time: render_time(line, st); break;
             case Page::Date: render_date(line); break;
+            case Page::Indoor: render_indoor(line); break;
+            case Page::Pressure: render_pressure(line); break;
             default: line[0] = '\0'; break;
         }
     } else {
@@ -142,7 +163,9 @@ static void handle_step(bool cw) {
     int dir = cw ? 1 : -1;
     switch (s_mode) {
         case Mode::Pages:
-            s_page = (Page)(((int)s_page + dir + (int)Page::Count) % (int)Page::Count);
+            do {
+                s_page = (Page)(((int)s_page + dir + (int)Page::Count) % (int)Page::Count);
+            } while (s_page == Page::Pressure && !sensors_has_pressure());
             break;
         case Mode::Menu:
             s_menu_item = (s_menu_item + dir + MI_COUNT) % MI_COUNT;
