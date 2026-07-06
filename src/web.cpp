@@ -63,12 +63,14 @@ static esp_err_t root_get_handler(httpd_req_t* req) {
 }
 
 // Copies a decoded form field into dst; leaves dst untouched when absent.
-static void form_field(const char* body, const char* key, char* dst, size_t dst_len) {
-    char val[65];
-    if (httpd_query_key_value(body, key, val, sizeof(val)) == ESP_OK) {
-        url_decode(val);
-        strlcpy(dst, val, dst_len);
-    }
+// Returns false when the decoded value is too long for dst.
+static bool form_field(const char* body, const char* key, char* dst, size_t dst_len) {
+    char val[384];  // sized for the URL-encoded value, which can be up to the whole body
+    if (httpd_query_key_value(body, key, val, sizeof(val)) != ESP_OK) return true;
+    url_decode(val);
+    if (strlen(val) >= dst_len) return false;
+    strlcpy(dst, val, dst_len);
+    return true;
 }
 
 static esp_err_t save_post_handler(httpd_req_t* req) {
@@ -87,12 +89,15 @@ static esp_err_t save_post_handler(httpd_req_t* req) {
     body[len] = '\0';
 
     Settings st = settings_get();
-    form_field(body, "ssid", st.ssid, sizeof(st.ssid));
-    form_field(body, "pass", st.pass, sizeof(st.pass));
-    form_field(body, "lat", st.lat, sizeof(st.lat));
-    form_field(body, "lon", st.lon, sizeof(st.lon));
     char tz[8] = "";
-    form_field(body, "tz", tz, sizeof(tz));
+    if (!form_field(body, "ssid", st.ssid, sizeof(st.ssid)) ||
+        !form_field(body, "pass", st.pass, sizeof(st.pass)) ||
+        !form_field(body, "lat", st.lat, sizeof(st.lat)) ||
+        !form_field(body, "lon", st.lon, sizeof(st.lon)) ||
+        !form_field(body, "tz", tz, sizeof(tz))) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "value too long");
+        return ESP_FAIL;
+    }
     if (tz[0]) {
         int idx = atoi(tz);
         if (idx >= 0 && idx < tz_count()) st.tz_idx = (uint8_t)idx;
