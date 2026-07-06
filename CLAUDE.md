@@ -55,6 +55,13 @@ and weather (15 min). Every screen is 16 uppercase ASCII chars.
 - clangd/IDE shows false "file not found" errors for IDF headers until a build regenerates
   `compile_commands.json` — trust the pio build.
 
+## Versioning
+This project follows semantic versioning (MAJOR.MINOR.PATCH):
+
+- MAJOR (1.0.0): bumped after current milestones (M0-M7) are finished, as well as future milestones
+- MINOR (0.1.0): bumped in feature PR. Also should be bumped in initial milestones (M0-M7)
+- PATCH (0.0.1): bumped in Bug Fix PR
+
 ## Gotchas
 
 - Partition table: single-app-large (1.5 MB factory app), no OTA — reflash over USB only.

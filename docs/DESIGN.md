@@ -91,13 +91,17 @@ pauses auto-cycle for 30 s):
 | 5 | CUSTOM   | POST'd text; >16 ch → marquee, 1 char / 300 ms | skipped in rotation when empty |
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
-**Encoder semantics — normal mode**: rotate = page switch. Click = enter menu.
-Long-press (≥1.5 s, judged by UI task: BtnDown then no BtnUp within 1.5 s) = status flash:
-IP address (or `PORTAL 192.168.4.1` / `WIFI CONNECTING`) for 3 s.
+**Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.5 s, fires
+while held; `MENU [====     ]` progress bar appears after 0.6 s) = enter menu. Click on
+the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
+`WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
 
-**Menu**: rotate = move between items; click = enter edit (value blinks, 500 ms toggle);
-in edit rotate = change value, click = confirm → immediate `settings_save` + live apply;
-20 s inactivity = exit.
+**Menu**: rotate = move between items; click = enter edit (the `>` cursor moves to the
+value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
+immediate `settings_save` + live apply; 20 s inactivity or long-press = exit to pages
+(abandons an uncommitted edit). Holding the button shows a progress bar after 0.6 s
+(`EXIT [====     ]`, one `=` per 100 ms render tick) and the exit fires at 1.5 s while
+still held.
 
 ```
 >BRIGHT      13      0..15 → driver 0..240 (×16); clamp min 1 while editing; applied live
@@ -105,6 +109,7 @@ in edit rotate = change value, click = confirm → immediate `settings_save` + l
 >TZ       PARIS      rotates timezone table
 >CYCLE      10s      OFF/5/10/30/60 s
 >WIFI RESET          click → "CLICK=CONFIRM" → click again → erase creds + reboot; rotate = cancel
+>STATUS              click → IP address / WiFi state for 3 s
 >EXIT
 ```
 
@@ -209,7 +214,7 @@ Verify at M5 that `uv_index` is accepted in `current=`; fallback:
 - **M6 — HTTP API + custom page**: *Verify:* `curl -X POST http://<ip>/api/message -d
   '{"text":"HELLO"}'` shows page; 65-char text → 400; long text marquees; survives
   reboot; `GET /api/status` sane.
-- **M7 — Polish**: full menu (24H, TZ, CYCLE), auto-cycle, status flash, portal
+- **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields. *Verify:* overnight soak — no reboots, clock correct, heap stable
   (via /api/status).
 
