@@ -1,1 +1,14 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# UART0 pins are repurposed (GPIO21 = VFD DIN, GPIO20 = encoder SW) -> console over USB
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# 1.5 MB factory app; the default 1 MB overflows once WiFi+TLS+httpd are linked (no OTA)
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# HTTPS trust store for the weather API; common-CA subset saves ~40 KB flash
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
+
+# Some browsers exceed the 512 B default on the provisioning portal
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024

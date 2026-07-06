@@ -180,16 +180,23 @@ Verify at M5 that `uv_index` is accepted in `current=`; fallback:
   CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024           # some browsers exceed 512 on the portal
   ```
   then delete generated `sdkconfig.seeed_xiao_esp32c3` (or fullclean) to regenerate.
+- **Found at M0:** the PIO espidf builder generates `partitions.bin` from
+  `board_build.partitions` in `platformio.ini` (default `partitions_singleapp.csv`) and
+  ignores sdkconfig `CONFIG_PARTITION_TABLE_*` — so
+  `board_build.partitions = partitions_singleapp_large.csv` is the authoritative setting;
+  the sdkconfig option is kept only for consistency.
 - Partition tradeoff: single-app-large = no OTA, USB reflash only — accepted for a desk
   clock; OTA later means a custom CSV with two ~1.6 MB slots (fits in 4 MB).
 
 ## Milestones (each hardware-verifiable)
 
-- **M0 — Build plumbing**: PRIV_REQUIRES + sdkconfig.defaults; demo still runs.
-  *Verify:* boot logs over USB-Serial-JTAG; app size < 1.5 MB.
-- **M1 — Encoder**: log events from a stub loop.
-  *Verify:* exactly one event per detent slow or fast, no reversals; click vs long-press
-  distinguishable; no phantom events from vibration.
+- **M0 — Build plumbing** ✅ (2026-07-05): PRIV_REQUIRES + sdkconfig.defaults +
+  `board_build.partitions`; demo still runs.
+  *Verified:* boot logs over USB-Serial-JTAG; factory slot 0x177000; app ~192 KB.
+- **M1 — Encoder** ✅ (2026-07-05): log events from a stub loop.
+  *Verified on hardware:* one event per detent, click vs long-press distinguishable;
+  direction sign was inverted for this wiring and is flipped at the emission point in
+  `encoder.cpp` (physical CW ⇒ accum −4 ⇒ StepCW).
 - **M2 — Settings + UI skeleton**: TIME/DATE pages (placeholder `--:--:--`), brightness
   menu item end-to-end. *Verify:* pages switch; brightness survives reboot.
 - **M3 — Sensors**: INDOOR (+PRESSURE) pages. *Verify:* plausible values; breathe on

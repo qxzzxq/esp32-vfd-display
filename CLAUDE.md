@@ -57,5 +57,8 @@ and weather (15 min). Every screen is 16 uppercase ASCII chars.
 
 ## Gotchas
 
-- Partition table: single-app-large, no OTA — reflash over USB only.
+- Partition table: single-app-large (1.5 MB factory app), no OTA — reflash over USB only.
+  It is selected by `board_build.partitions` in `platformio.ini` — the PIO espidf builder
+  IGNORES sdkconfig `CONFIG_PARTITION_TABLE_*` (we keep the sdkconfig option set anyway so
+  both layers agree).
 - Time is lost on power cycle (no battery RTC) until SNTP resyncs.

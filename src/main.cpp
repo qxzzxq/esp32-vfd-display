@@ -1,4 +1,9 @@
+#include <stdio.h>
+
 #include "VFDDisplay.h"
+#include "encoder.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -7,44 +12,55 @@
 #define VFD_CLK 7
 #define VFD_DIN 21
 
+static const char* TAG = "main";
+
 // Create VFD display object with 16 digits (uses SPI2_HOST by default)
 VFDDisplay vfd(VFD_CS, VFD_CLK, VFD_DIN, 16);
 
-// For 8 digits, you would use:
-// VFDDisplay vfd(VFD_CS, VFD_CLK, VFD_DIN, 8);
-
+// M1 milestone test loop: log every encoder event and mirror it on the VFD.
+// Verify: exactly one step per detent (no bounce/reversals), and click vs
+// long-press (>=1.5 s) distinguishable by the logged hold duration.
 extern "C" void app_main(void) {
-  // Initialise the display (this also starts the SPI peripheral).
   vfd.init();
-  // Clear the display
   vfd.clear();
-  // Display a welcome message
-  vfd.setBrightness(120); // Set brightness to a medium level
+  vfd.setBrightness(120);
+  vfd.writeString(0, "ENCODER TEST    ");
 
+  encoder_init();
+  ESP_LOGI(TAG, "encoder test ready: rotate and click");
+
+  int pos = 0;
+  int64_t btn_down_us = 0;
+  char line[17];
   while (1) {
-    // Example usage
-    // vfd.clear();
-    for (int i = 0; i <10; i++) {
-      vfd.writeChar(0, i + '0');  // Display digits 0-9 at position 0
-      vTaskDelay(pdMS_TO_TICKS(1000));
+    EncEvent ev;
+    if (!encoder_wait(&ev, portMAX_DELAY)) continue;
+
+    switch (ev) {
+      case EncEvent::StepCW:
+        pos++;
+        ESP_LOGI(TAG, "CW  pos=%d", pos);
+        snprintf(line, sizeof(line), "CW   POS %6d", pos);
+        break;
+      case EncEvent::StepCCW:
+        pos--;
+        ESP_LOGI(TAG, "CCW pos=%d", pos);
+        snprintf(line, sizeof(line), "CCW  POS %6d", pos);
+        break;
+      case EncEvent::BtnDown:
+        btn_down_us = esp_timer_get_time();
+        ESP_LOGI(TAG, "BTN down");
+        snprintf(line, sizeof(line), "BTN DOWN        ");
+        break;
+      case EncEvent::BtnUp: {
+        int64_t held_ms = (esp_timer_get_time() - btn_down_us) / 1000;
+        ESP_LOGI(TAG, "BTN up after %lld ms (%s)", held_ms,
+                 held_ms >= 1500 ? "LONG-PRESS" : "CLICK");
+        snprintf(line, sizeof(line), "%-5s %7lldMS",
+                 held_ms >= 1500 ? "LONG" : "CLICK", held_ms);
+        break;
+      }
     }
-    // vfd.writeChar(0, 'A');
-    // vTaskDelay(pdMS_TO_TICKS(2000));
-
-    // vfd.writeString(0, "Hello World!    ");
-    // vTaskDelay(pdMS_TO_TICKS(2000));
-
-    // vfd.writeString(0, "== Xuzhou Qin == ");
-    // vTaskDelay(pdMS_TO_TICKS(2000));
-
-    // Test brightness control
-    // for (int brightness = 255; brightness >= 50; brightness -= 50) {
-    //   vfd.setBrightness(brightness);
-    //   vfd.writeString(0, "Bright Test     ");
-    //   vTaskDelay(pdMS_TO_TICKS(1000));
-    // }
-
-    // Reset to full brightness
-    // vfd.setBrightness(255);
+    vfd.writeString(0, line);
   }
 }
