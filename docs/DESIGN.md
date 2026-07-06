@@ -206,8 +206,12 @@ Verify at M5 that `uv_index` is accepted in `current=`; fallback:
   `--:--:--`), brightness menu item end-to-end.
   *Verified on hardware:* pages switch; menu/edit/hold gestures work; brightness
   persists across reboot.
-- **M3 — Sensors**: INDOOR (+PRESSURE) pages. *Verify:* plausible values; breathe on
-  sensor → RH rises; unplug SDA → `SENSOR ERR`, no crash.
+- **M3 — Sensors** ✅ (2026-07-05): INDOOR (+PRESSURE) pages.
+  *Verified on hardware:* plausible values (BMP280 found at 0x77; 842 hPa station
+  pressure cross-checked against ABQ ~1500 m elevation + sea-level report); breathe
+  test → RH rises. Not yet exercised: SDA-unplug recovery (lazy re-init code path).
+  Open question: AHT20 reads ~+1 °C vs room reference — likely heat from the
+  VFD/XIAO nearby; add a calibration offset setting if it persists (M7).
 - **M4 — WiFi + provisioning + SNTP**: portal mode + boot-hold recovery. *Verify:* fresh
   device pops captive portal on a phone; after submit, joins home WiFi, time live in
   configured TZ within ~15 s; WIFI RESET returns to portal.
