@@ -34,4 +34,12 @@ inline UiSnapshot make_snapshot() {
     return s;
 }
 
+// Zeroed UiOutput (UiFsm::tick resets it itself; direct page/item tests need
+// a clean one).
+inline UiOutput make_output() {
+    UiOutput o;
+    memset(&o, 0, sizeof(o));
+    return o;
+}
+
 #endif
