@@ -1,0 +1,220 @@
+# VFD Clock — Design
+
+A connected desk clock built on a Seeed XIAO ESP32-C3 driving a 16-character alphanumeric
+grid VFD (built-in ASCII font, 3-wire SPI, existing `VFDDisplay` driver). A KY-040 rotary
+encoder switches display pages and drives a settings menu. Indoor climate comes from a
+local AHT20+BMP280 module; outdoor weather (incl. UV index) from the Open-Meteo API.
+A small HTTP API lets other systems push a custom text page.
+
+## Hardware / pin assignment (XIAO ESP32-C3)
+
+Nothing beyond the VFD is wired yet — this table is the wiring guide.
+
+| GPIO | XIAO | Use             | Notes |
+|------|------|-----------------|-------|
+| 2    | D0   | free            | Strap pin (must be high at boot) — deliberately unused |
+| 3    | D1   | Encoder CLK (A) | KY-040 onboard pull-up, idles high |
+| 4    | D2   | I2C SDA         | AHT20 @0x38, BMP280 @0x76 (probe 0x77 fallback), 100 kHz |
+| 5    | D3   | I2C SCL         | Enable internal pull-ups as backstop; module pull-ups expected |
+| 6    | D4   | VFD CS          | existing |
+| 7    | D5   | VFD CLK         | existing |
+| 21   | D6   | VFD DIN         | existing (U0TXD — UART0 console unusable → USB-Serial-JTAG console) |
+| 20   | D7   | Encoder SW      | Internal pull-up; hold low ≥3 s at boot = provisioning recovery |
+| 8    | D8   | free            | Strap pin — deliberately unused |
+| 9    | D9   | free            | BOOT button — deliberately unused |
+| 10   | D10  | Encoder DT (B)  | KY-040 onboard pull-up |
+
+All three strap pins (2/8/9) stay unconnected. KY-040 runs at 3.3 V.
+
+## Modules
+
+All new code lives in `src/` (the only IDF component dir). `VFDDisplay.{h,cpp}` is unchanged.
+Style: plain C++/C matching `VFDDisplay`, ESP-IDF C APIs, no frameworks. Producer modules
+own their data and expose copy-out getters — no global state struct, no cross-module locking.
+
+- **`encoder.{h,cpp}`** — KY-040 quadrature decode + button, GPIO-ISR based (ESP32-C3 has
+  no PCNT peripheral). Rotation: full-step Gray-code transition table (4-bit prev<<2|curr
+  lookup), emits a step only when the state returns to the detent — inherently rejects
+  contact bounce, no timing debounce needed. Button: ANYEDGE ISR with 20 ms edge filter
+  (`esp_timer_get_time()` delta), emits raw BtnDown/BtnUp. Events
+  (`StepCW/StepCCW/BtnDown/BtnUp`) go to an 8-deep queue; UI blocks in
+  `encoder_wait(ev, timeout)`.
+- **`settings.{h,cpp}`** — NVS-backed `Settings` struct + static timezone table
+  (~12–15 entries: display name ≤10 chars + POSIX TZ string). `settings_get()` (copy under
+  mutex), `settings_save()` (diff-write keys, re-apply `setenv("TZ")+tzset()`).
+- **`sensors.{h,cpp}`** — I2C master (`esp_driver_i2c`, `i2c_master.h`) + minimal AHT20 and
+  BMP280 drivers. `sensors_read()` blocking ~90 ms, called only by the worker task;
+  `sensors_get(&tC, &rh, &hPa)` returns false if never read / last read failed.
+- **`weather.{h,cpp}`** — Open-Meteo fetch + cJSON parse. `weather_fetch(lat, lon)` blocking,
+  worker task only; `weather_get(&Weather)` includes fetched-at timestamp for staleness.
+- **`net.{h,cpp}`** — WiFi lifecycle + SNTP + worker task. STA mode: connect with backoff
+  (1 s → 30 s cap), retry forever, no automatic fallback to portal. SNTP via `pool.ntp.org`
+  once IP is up (RTC kept in UTC; TZ is display-only). `net_init(force_portal)`,
+  `net_state()` (Portal/Connecting/Connected), `net_time_synced()`, `net_get_ip()`,
+  `net_reset_credentials()` (erase ssid/pass, restart).
+- **`web.{h,cpp}`** — one `esp_http_server`, two modes. Portal mode: form + `/save` +
+  wildcard 302 + DNS-hijack task on 192.168.4.1; portal HTML as a raw string literal.
+  API mode (STA): `/api/message`, `/api/status`.
+- **`ui.{h,cpp}`** — page rendering + menu state machine; sole owner of the `VFDDisplay`
+  instance. `ui_run()` never returns.
+- **`main.cpp`** — boot: `nvs_flash_init` → `settings_init` → boot-hold check on GPIO20
+  (3 s low → force portal) → `encoder_init` → `sensors_init` → `net_init(force)` → `ui_run()`.
+
+## Task / concurrency model
+
+- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms)`; event → input
+  handling, timeout → re-render (clock seconds, edit-mode blink, marquee, auto-cycle).
+  Only this task touches the VFD.
+- **Worker task** (in `net.cpp`, prio 3, ~6 KB stack): 1 s loop; sensors every 10 s;
+  weather every 15 min when Connected and lat/lon set (retry after 2 min on failure,
+  max 3 retries per slot).
+- **ISRs**: encoder rotation + button as above → queue (`xQueueSendFromISR`; drops when
+  full are harmless).
+- **IDF tasks**: wifi, lwIP, event loop, esp_timer, httpd. WiFi event handlers only set
+  state and reconnect.
+- **DNS hijack task**: AP mode only; answers every A query with 192.168.4.1.
+- Sharing: one short-held mutex per producer module (settings, sensors, weather).
+
+## UI
+
+Every screen is 16 uppercase ASCII characters (VFD lowercase glyphs unverified).
+
+**Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
+pauses auto-cycle for 30 s):
+
+| # | Page     | Layout (16 ch)       | Stale / unavailable |
+|---|----------|----------------------|---------------------|
+| 1 | TIME     | `    14:25:36    ` (12h: `   2:25:36 PM  `) | `    --:--:--    ` until SNTP sync |
+| 2 | DATE     | ` SAT 2026-07-05 `   | ` NO TIME SYNC   ` |
+| 3 | INDOOR   | `IN  23.4C   47% `   | `IN  SENSOR ERR  ` |
+| 4 | OUTDOOR  | `OUT 31C 60% UV9 `   | `OUT NO DATA` / `SET LOCATION` if lat/lon empty; `?` suffix if >45 min old |
+| 5 | CUSTOM   | POST'd text; >16 ch → marquee, 1 char / 300 ms | skipped in rotation when empty |
+| 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
+
+**Encoder semantics — normal mode**: rotate = page switch. Click = enter menu.
+Long-press (≥1.5 s, judged by UI task: BtnDown then no BtnUp within 1.5 s) = status flash:
+IP address (or `PORTAL 192.168.4.1` / `WIFI CONNECTING`) for 3 s.
+
+**Menu**: rotate = move between items; click = enter edit (value blinks, 500 ms toggle);
+in edit rotate = change value, click = confirm → immediate `settings_save` + live apply;
+20 s inactivity = exit.
+
+```
+>BRIGHT      13      0..15 → driver 0..240 (×16); clamp min 1 while editing; applied live
+>24H         ON      ON/OFF
+>TZ       PARIS      rotates timezone table
+>CYCLE      10s      OFF/5/10/30/60 s
+>WIFI RESET          click → "CLICK=CONFIRM" → click again → erase creds + reboot; rotate = cancel
+>EXIT
+```
+
+## HTTP API (STA mode, port 80)
+
+No auth — trusted LAN, accepted risk (a static-token header check is a small add later).
+
+- `POST /api/message` — body `{"text":"PIZZA AT 7PM"}`. Validation: `text` required,
+  string, ≤64 chars, printable ASCII 0x20–0x7E. Empty string clears the page. Persisted
+  to NVS (`msg`), survives reboot, replaced by next POST. Responses: `200 {"ok":true}`,
+  `400 {"error":"..."}`, `413` if body >256 B.
+- `GET /api/message` — `{"text":"..."}`.
+- `GET /api/status` — `{"time":"2026-07-05T14:25:36","synced":true,`
+  `"indoor":{"t":23.4,"rh":47.0,"p":1013.2},`
+  `"weather":{"t":31.0,"rh":60.0,"uv":9.0,"age_s":312},"rssi":-58,"heap":123456}` —
+  debugging aid for every milestone from M4 on.
+
+## Provisioning
+
+Hand-rolled portal (not the `wifi_provisioning` managed component — its SoftAP transport
+speaks protobuf to Espressif's phone app, not a browser form; a portal is ~150 lines on
+top of the httpd we already need).
+
+```
+boot → nvs_flash_init → settings_init
+  → GPIO20 held low ≥3 s?  → erase creds → PORTAL
+  → settings.ssid empty?   → PORTAL
+  → else STA: connect, retry forever w/ backoff (1→30 s)
+       got IP → web_start_api() + SNTP start
+PORTAL: open AP "VFD-CLOCK-XXXX" (last 2 MAC bytes), IP 192.168.4.1,
+        DNS hijack task, httpd with wildcard matching:
+   GET  /      → HTML form: SSID, password, TZ <select>, lat, lon (optional)
+   POST /save  → validate ssid non-empty → settings_save → "Rebooting…" → esp_restart
+   GET  /*     → 302 → http://192.168.4.1/  (catches generate_204, hotspot-detect.html, …)
+```
+
+VFD during portal alternates `SETUP VFD-XXXX` / `AP 192.168.4.1` every 3 s.
+Deliberately **no** automatic STA→portal fallback (a router reboot must not demote the
+clock to AP mode); recovery = menu WIFI RESET or boot-hold GPIO20.
+
+## NVS schema
+
+Namespace `vfdclk`:
+
+| Key            | Type | Default  | Notes |
+|----------------|------|----------|-------|
+| `ssid` / `pass`| str  | ""       | empty ssid ⇒ portal |
+| `bright`       | u8   | 200      | 0–240, driver units |
+| `use24h`       | u8   | 1        | |
+| `tz_idx`       | u8   | 0 (UTC)  | index into timezone table |
+| `cycle_s`      | u8   | 0        | 0 = auto-cycle off |
+| `lat` / `lon`  | str  | ""       | strings (NVS has no float); empty ⇒ weather disabled |
+| `msg`          | str  | ""       | custom page text |
+
+## Weather API
+
+`GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,uv_index`
+— free, no API key, ~400 B JSON, parsed with cJSON. Fetched every 15 min. HTTPS via
+`esp_http_client` + `esp_crt_bundle_attach`.
+Verify at M5 that `uv_index` is accepted in `current=`; fallback:
+`hourly=uv_index&forecast_days=1` and pick the current hour.
+
+## Build config changes (at M0)
+
+- `src/CMakeLists.txt` `PRIV_REQUIRES` add: `esp_driver_i2c esp_wifi esp_netif esp_event
+  nvs_flash lwip esp_http_server esp_http_client esp-tls mbedtls json esp_timer`
+- `sdkconfig.defaults` add:
+  ```
+  CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y        # UART0 pins consumed (VFD DIN=21, SW=20)
+  CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y   # 1 MB factory app overflows w/ WiFi+TLS+httpd
+  CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+  CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
+  CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024           # some browsers exceed 512 on the portal
+  ```
+  then delete generated `sdkconfig.seeed_xiao_esp32c3` (or fullclean) to regenerate.
+- Partition tradeoff: single-app-large = no OTA, USB reflash only — accepted for a desk
+  clock; OTA later means a custom CSV with two ~1.6 MB slots (fits in 4 MB).
+
+## Milestones (each hardware-verifiable)
+
+- **M0 — Build plumbing**: PRIV_REQUIRES + sdkconfig.defaults; demo still runs.
+  *Verify:* boot logs over USB-Serial-JTAG; app size < 1.5 MB.
+- **M1 — Encoder**: log events from a stub loop.
+  *Verify:* exactly one event per detent slow or fast, no reversals; click vs long-press
+  distinguishable; no phantom events from vibration.
+- **M2 — Settings + UI skeleton**: TIME/DATE pages (placeholder `--:--:--`), brightness
+  menu item end-to-end. *Verify:* pages switch; brightness survives reboot.
+- **M3 — Sensors**: INDOOR (+PRESSURE) pages. *Verify:* plausible values; breathe on
+  sensor → RH rises; unplug SDA → `SENSOR ERR`, no crash.
+- **M4 — WiFi + provisioning + SNTP**: portal mode + boot-hold recovery. *Verify:* fresh
+  device pops captive portal on a phone; after submit, joins home WiFi, time live in
+  configured TZ within ~15 s; WIFI RESET returns to portal.
+- **M5 — Weather**: OUTDOOR page. *Verify:* values match open-meteo.com for same
+  coordinates; unplug router → stale `?`, recovers on reconnect.
+- **M6 — HTTP API + custom page**: *Verify:* `curl -X POST http://<ip>/api/message -d
+  '{"text":"HELLO"}'` shows page; 65-char text → 400; long text marquees; survives
+  reboot; `GET /api/status` sane.
+- **M7 — Polish**: full menu (24H, TZ, CYCLE), auto-cycle, status flash, portal
+  lat/lon/TZ fields. *Verify:* overnight soak — no reboots, clock correct, heap stable
+  (via /api/status).
+
+## Open questions / risks
+
+1. App size vs 1.5 MB factory slot — expected to fit with the common-CA cert bundle
+   subset; if not, custom partition CSV (check at M0).
+2. `esp_netif_sntp.h` component home (esp_netif vs lwip) — both in PRIV_REQUIRES,
+   self-resolving at first build.
+3. Open-Meteo `current=uv_index` support — verify with curl at M5; hourly fallback above.
+4. VFD lowercase glyphs unverified — design is uppercase-only.
+5. No automatic portal fallback after repeated STA failures — deliberate; revisit if it
+   annoys in practice.
+6. Sensor-module I2C pull-ups assumed present — internal pull-ups as backstop; verify at M3.
+7. Provisioning AP is open (passwordless) — brief exposure during setup only; accepted.

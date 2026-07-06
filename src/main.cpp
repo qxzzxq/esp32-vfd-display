@@ -18,22 +18,24 @@ extern "C" void app_main(void) {
   vfd.init();
   // Clear the display
   vfd.clear();
-
   // Display a welcome message
-  vfd.writeString(0, "VFD Library Test");
   vfd.setBrightness(120); // Set brightness to a medium level
 
   while (1) {
     // Example usage
-    vfd.clear();
-    vfd.writeChar(0, 'A');
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    // vfd.clear();
+    for (int i = 0; i <10; i++) {
+      vfd.writeChar(0, i + '0');  // Display digits 0-9 at position 0
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    // vfd.writeChar(0, 'A');
+    // vTaskDelay(pdMS_TO_TICKS(2000));
 
-    vfd.writeString(0, "Hello World!    ");
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    // vfd.writeString(0, "Hello World!    ");
+    // vTaskDelay(pdMS_TO_TICKS(2000));
 
-    vfd.writeString(0, "== Xuzhou Qin == ");
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    // vfd.writeString(0, "== Xuzhou Qin == ");
+    // vTaskDelay(pdMS_TO_TICKS(2000));
 
     // Test brightness control
     // for (int brightness = 255; brightness >= 50; brightness -= 50) {
