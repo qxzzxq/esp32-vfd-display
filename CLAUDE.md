@@ -62,6 +62,9 @@ This project follows semantic versioning (MAJOR.MINOR.PATCH):
 - MINOR (0.1.0): bumped in feature PR. Also should be bumped in initial milestones (M0-M7)
 - PATCH (0.0.1): bumped in Bug Fix PR
 
+The version lives in `version.txt` at the project root; ESP-IDF embeds it in the app
+descriptor (visible as "App version" in the boot log and later via /api/status).
+
 ## Gotchas
 
 - Partition table: single-app-large (1.5 MB factory app), no OTA — reflash over USB only.

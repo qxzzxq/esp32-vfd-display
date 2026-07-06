@@ -202,8 +202,10 @@ Verify at M5 that `uv_index` is accepted in `current=`; fallback:
   *Verified on hardware:* one event per detent, click vs long-press distinguishable;
   direction sign was inverted for this wiring and is flipped at the emission point in
   `encoder.cpp` (physical CW ⇒ accum −4 ⇒ StepCW).
-- **M2 — Settings + UI skeleton**: TIME/DATE pages (placeholder `--:--:--`), brightness
-  menu item end-to-end. *Verify:* pages switch; brightness survives reboot.
+- **M2 — Settings + UI skeleton** ✅ (2026-07-05): TIME/DATE pages (placeholder
+  `--:--:--`), brightness menu item end-to-end.
+  *Verified on hardware:* pages switch; menu/edit/hold gestures work; brightness
+  persists across reboot.
 - **M3 — Sensors**: INDOOR (+PRESSURE) pages. *Verify:* plausible values; breathe on
   sensor → RH rises; unplug SDA → `SENSOR ERR`, no crash.
 - **M4 — WiFi + provisioning + SNTP**: portal mode + boot-hold recovery. *Verify:* fresh
