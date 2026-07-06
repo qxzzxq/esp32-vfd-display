@@ -139,14 +139,15 @@ boot → nvs_flash_init → settings_init
   → settings.ssid empty?   → PORTAL
   → else STA: connect, retry forever w/ backoff (1→30 s)
        got IP → web_start_api() + SNTP start
-PORTAL: open AP "VFD-CLOCK-XXXX" (last 2 MAC bytes), IP 192.168.4.1,
+PORTAL: open AP "VFD-XXXX" (last 2 MAC bytes; short so it fits the 16-char
+        status screen verbatim), IP 192.168.4.1,
         DNS hijack task, httpd with wildcard matching:
    GET  /      → HTML form: SSID, password, TZ <select>, lat, lon (optional)
    POST /save  → validate ssid non-empty → settings_save → "Rebooting…" → esp_restart
    GET  /*     → 302 → http://192.168.4.1/  (catches generate_204, hotspot-detect.html, …)
 ```
 
-VFD during portal alternates `SETUP VFD-XXXX` / `AP 192.168.4.1` every 3 s.
+VFD during portal alternates `SETUP  VFD-XXXX` / `AP 192.168.4.1` every 3 s.
 Deliberately **no** automatic STA→portal fallback (a router reboot must not demote the
 clock to AP mode); recovery = menu WIFI RESET or boot-hold GPIO20.
 
@@ -212,9 +213,10 @@ Verify at M5 that `uv_index` is accepted in `current=`; fallback:
   test → RH rises. Not yet exercised: SDA-unplug recovery (lazy re-init code path).
   Open question: AHT20 reads ~+1 °C vs room reference — likely heat from the
   VFD/XIAO nearby; add a calibration offset setting if it persists (M7).
-- **M4 — WiFi + provisioning + SNTP**: portal mode + boot-hold recovery. *Verify:* fresh
-  device pops captive portal on a phone; after submit, joins home WiFi, time live in
-  configured TZ within ~15 s; WIFI RESET returns to portal.
+- **M4 — WiFi + provisioning + SNTP** ✅ (2026-07-06): portal mode + boot-hold recovery.
+  *Verified on hardware:* captive portal provisioning from a phone (AP `VFD-1111`),
+  joins home WiFi, time live in configured TZ; menu WIFI RESET returns to portal.
+  Not yet exercised: boot-hold (hold SW ≥3 s at power-on) recovery path.
 - **M5 — Weather**: OUTDOOR page. *Verify:* values match open-meteo.com for same
   coordinates; unplug router → stale `?`, recovers on reconnect.
 - **M6 — HTTP API + custom page**: *Verify:* `curl -X POST http://<ip>/api/message -d

@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "net.h"
 #include "sensors.h"
 #include "settings.h"
 
@@ -33,8 +34,8 @@ static VFDDisplay s_vfd(VFD_CS, VFD_CLK, VFD_DIN, 16);
 
 enum class Page : uint8_t { Time, Date, Indoor, Pressure, Count };
 enum class Mode : uint8_t { Pages, Menu, Edit };
-// M2 menu subset; the remaining items (24H, TZ, CYCLE, WIFI RESET) arrive with M7.
-enum MenuItem : int { MI_BRIGHT, MI_EXIT, MI_COUNT };
+// Menu grows with milestones; 24H, TZ, CYCLE and STATUS arrive with M7.
+enum MenuItem : int { MI_BRIGHT, MI_WIFIRST, MI_EXIT, MI_COUNT };
 
 static Page s_page = Page::Time;
 static Mode s_mode = Mode::Pages;
@@ -104,6 +105,15 @@ static void render(int64_t now_us) {
         for (int i = 0; i < 9; i++) bar[i] = i < filled ? '=' : ' ';
         bar[9] = '\0';
         snprintf(line, 17, "%s [%s]", s_mode == Mode::Pages ? "MENU" : "EXIT", bar);
+    } else if (s_mode == Mode::Pages && net_state() == NetState::Portal) {
+        // Provisioning: alternate the AP name and the portal address every 3 s
+        if ((now_us / 3000000LL) % 2 == 0) {
+            char ap[16];
+            net_get_ap_ssid(ap);
+            snprintf(line, 17, "SETUP  %-9s", ap);
+        } else {
+            snprintf(line, 17, "AP 192.168.4.1  ");
+        }
     } else if (s_mode == Mode::Pages) {
         switch (s_page) {
             case Page::Time: render_time(line, st); break;
@@ -123,6 +133,12 @@ static void render(int64_t now_us) {
                 } else {
                     snprintf(line, 17, ">BRIGHT %8d", st.bright / 16);
                 }
+                break;
+            case MI_WIFIRST:
+                if (s_mode == Mode::Edit)
+                    snprintf(line, 17, "CLICK = CONFIRM ");
+                else
+                    snprintf(line, 17, ">WIFI RESET     ");
                 break;
             case MI_EXIT:
             default:
@@ -146,15 +162,21 @@ static void handle_click() {
                 if (s_edit_bright < 1) s_edit_bright = 1;
                 if (s_edit_bright > 15) s_edit_bright = 15;
                 s_mode = Mode::Edit;
+            } else if (s_menu_item == MI_WIFIRST) {
+                s_mode = Mode::Edit;  // "CLICK = CONFIRM" armed
             } else {  // MI_EXIT
                 s_mode = Mode::Pages;
             }
             break;
         case Mode::Edit:
-            st = settings_get();
-            st.bright = s_edit_bright * 16;
-            settings_save(st);
-            s_mode = Mode::Menu;
+            if (s_menu_item == MI_WIFIRST) {
+                net_reset_credentials();  // reboots into the portal
+            } else {  // MI_BRIGHT
+                st = settings_get();
+                st.bright = s_edit_bright * 16;
+                settings_save(st);
+                s_mode = Mode::Menu;
+            }
             break;
     }
 }
@@ -171,6 +193,10 @@ static void handle_step(bool cw) {
             s_menu_item = (s_menu_item + dir + MI_COUNT) % MI_COUNT;
             break;
         case Mode::Edit:
+            if (s_menu_item == MI_WIFIRST) {
+                s_mode = Mode::Menu;  // rotate = cancel the confirm
+                break;
+            }
             s_edit_bright += dir;
             if (s_edit_bright < 1) s_edit_bright = 1;   // keep the display visible
             if (s_edit_bright > 15) s_edit_bright = 15;
