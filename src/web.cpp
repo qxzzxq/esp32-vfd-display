@@ -142,10 +142,16 @@ static void dns_task(void*) {
         socklen_t slen = sizeof(src);
         int len = recvfrom(sock, buf, sizeof(buf) - 16, 0, (struct sockaddr*)&src, &slen);
         if (len < 12) continue;
+        // Walk the question name so the answer lands right after the question
+        // section, dropping any additional records (e.g. EDNS0) the client sent.
+        int q = 12;
+        while (q < len && buf[q] != 0) q += buf[q] + 1;
+        q += 5;  // name terminator + QTYPE/QCLASS
+        if (q > len) continue;
         buf[2] = 0x81;  // response, recursion desired
         buf[3] = 0x80;  // recursion available, no error
-        buf[6] = buf[4];  // ANCOUNT = QDCOUNT (single question in practice)
-        buf[7] = buf[5];
+        buf[6] = 0;  // ANCOUNT = 1 (single question in practice)
+        buf[7] = 1;
         buf[8] = buf[9] = buf[10] = buf[11] = 0;  // no NS/AR records
         static const uint8_t ans[16] = {
             0xC0, 0x0C,              // name: pointer to the query name
@@ -153,8 +159,8 @@ static void dns_task(void*) {
             0x00, 0x00, 0x00, 0x3C,  // TTL 60 s
             0x00, 0x04, 192, 168, 4, 1,
         };
-        memcpy(buf + len, ans, sizeof(ans));
-        sendto(sock, buf, len + sizeof(ans), 0, (struct sockaddr*)&src, slen);
+        memcpy(buf + q, ans, sizeof(ans));
+        sendto(sock, buf, q + sizeof(ans), 0, (struct sockaddr*)&src, slen);
     }
 }
 

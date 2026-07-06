@@ -68,8 +68,11 @@ static void start_sta() {
 
     Settings st = settings_get();
     wifi_config_t wc = {};
-    strlcpy((char*)wc.sta.ssid, st.ssid, sizeof(wc.sta.ssid));
-    strlcpy((char*)wc.sta.password, st.pass, sizeof(wc.sta.password));
+    // ssid/password are fixed-width fields that need no terminator at max
+    // length; strlcpy would drop the last char of a 32-char SSID / 64-char
+    // password. wc is zero-filled, so shorter values stay NUL-padded.
+    memcpy(wc.sta.ssid, st.ssid, strlen(st.ssid));
+    memcpy(wc.sta.password, st.pass, strlen(st.pass));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
