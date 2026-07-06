@@ -74,7 +74,13 @@ static void start_sta() {
     memcpy(wc.sta.ssid, st.ssid, strlen(st.ssid));
     memcpy(wc.sta.password, st.pass, strlen(st.pass));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &wc);
+    if (err != ESP_OK) {
+        // Credentials the driver rejects (e.g. bad PSK) would abort-loop here;
+        // wipe them and reboot into the portal instead.
+        ESP_LOGE(TAG, "sta config rejected: %s", esp_err_to_name(err));
+        net_reset_credentials();
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // Starts now, syncs once the network is up; retries internally.

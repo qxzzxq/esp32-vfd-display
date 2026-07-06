@@ -22,7 +22,7 @@ label{display:block;margin-top:1em}input,select{width:100%;padding:.5em;box-sizi
 button{margin-top:1.5em;width:100%;padding:.7em}</style></head><body>
 <h2>VFD Clock Setup</h2><form method="POST" action="/save">
 <label>WiFi network<input name="ssid" maxlength="32" required></label>
-<label>Password<input name="pass" type="password" maxlength="64"></label>
+<label>Password<input name="pass" type="password" minlength="8" maxlength="64"></label>
 <label>Timezone<select name="tz">)";
 
 static const char PORTAL_HTML_TAIL[] = R"(</select></label>
@@ -104,6 +104,13 @@ static esp_err_t save_post_handler(httpd_req_t* req) {
     }
     if (st.ssid[0] == '\0') {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "SSID required");
+        return ESP_FAIL;
+    }
+    size_t pass_len = strlen(st.pass);
+    if (pass_len > 0 && pass_len < 8) {
+        // esp_wifi_set_config() rejects 1-7 char passwords; saving one would
+        // reboot into an aborting STA startup.
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "password must be 8+ chars");
         return ESP_FAIL;
     }
     settings_save(st);
