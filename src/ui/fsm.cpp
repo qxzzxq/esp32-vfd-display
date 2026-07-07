@@ -12,17 +12,22 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
     out->hold_fired = false;
     out->effect_count = 0;
 
+    // Mutable per-tick view: a committing item writes its new value here so
+    // the render below shows it immediately, one tick before the shell's
+    // effect persists it and the next snapshot catches up.
+    UiSnapshot view = s;
+
     if (in != UiInput::None) {
         last_input_us_ = now_us;
         switch (in) {
-            case UiInput::StepCW: handle_step(1, s, *out); break;
-            case UiInput::StepCCW: handle_step(-1, s, *out); break;
+            case UiInput::StepCW: handle_step(1, view, *out); break;
+            case UiInput::StepCCW: handle_step(-1, view, *out); break;
             case UiInput::BtnDown:
                 press_start_us_ = now_us;
                 break;
             case UiInput::BtnUp:
                 if (press_start_us_ >= 0 && now_us - press_start_us_ < UI_LONG_PRESS_US)
-                    handle_click(s, *out);
+                    handle_click(view, *out);
                 // a full long-press already fired at the threshold below
                 press_start_us_ = -1;
                 break;
@@ -31,10 +36,10 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
         }
     } else if (mode_ != Mode::Pages && now_us - last_input_us_ > UI_MENU_TIMEOUT_US) {
         // Inactivity: abandon the menu (and any uncommitted edit)
-        abort_to_pages(s, *out);
+        abort_to_pages(view, *out);
     }
 
-    render(out->line, now_us, s);
+    render(out->line, now_us, view);
 
     // Long-press fires while still held: from the pages it opens the menu,
     // from the menu it escapes. render() has just drawn the completed bar
@@ -47,14 +52,14 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
             mode_ = Mode::Menu;
             item_ = 0;
         } else {
-            abort_to_pages(s, *out);
+            abort_to_pages(view, *out);
         }
         press_start_us_ = -1;
     }
 }
 
 // Short-press action, dispatched on button release.
-void UiFsm::handle_click(const UiSnapshot& s, UiOutput& out) {
+void UiFsm::handle_click(UiSnapshot& s, UiOutput& out) {
     switch (mode_) {
         case Mode::Pages:
             // menu entry is long-press (MENU bar); click on the pages is unassigned

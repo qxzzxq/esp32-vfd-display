@@ -102,6 +102,10 @@ static void test_bright_commit_persists_edited_value(void) {
     out = make_output();
     TEST_ASSERT_TRUE(item(ITEM_BRIGHT)->edit_click(s, out));
     assert_single_effect(out, UiEffect::Type::CommitBrightness, 144);
+    // The commit also updates the view so the same tick renders the new
+    // value (the persist effect only executes after the draw).
+    TEST_ASSERT_EQUAL_INT(144, s.bright);
+    assert_render(ITEM_BRIGHT, false, s, ">BRIGHT        9");
 }
 
 static void test_bright_abort_restores_saved_brightness(void) {

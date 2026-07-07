@@ -55,14 +55,14 @@ own their data and expose copy-out getters — no global state struct, no cross-
 - **`web.{h,cpp}`** — one `esp_http_server`, two modes. Portal mode: form + `/save` +
   wildcard 302 + DNS-hijack task on 192.168.4.1; portal HTML as a raw string literal.
   API mode (STA): `/api/message`, `/api/status`.
-- **`ui.{h,cpp}`** — page rendering + menu state machine; sole owner of the `VFDDisplay`
-  instance. `ui_run()` never returns.
+- **`ui.{h,cpp}`** — thin platform shell: owns the `VFDDisplay` instance and the encoder
+  loop, builds the per-tick `UiSnapshot` from the producer modules, draws the line the
+  core returns, and executes the returned `UiEffect`s. `ui_run()` never returns.
 - **`ui/` (pure UI core)** — host-testable UI logic: `UiFsm` (Pages/Menu/Edit modes,
   click vs long-press recognition, menu timeout, overlay priority) plus the `UiPage` /
   `MenuItem` interfaces and their concrete singletons. Libc includes only — no
   ESP-IDF/FreeRTOS/project headers. Consumes a per-tick `UiSnapshot` built by the shell,
-  returns the 16-char line + `UiEffect` list. `ui.cpp` becomes a thin shell over it in
-  the second refactor PR.
+  returns the 16-char line + `UiEffect` list.
 - **`main.cpp`** — boot: `nvs_flash_init` → `settings_init` → boot-hold check on GPIO20
   (3 s low → force portal) → `encoder_init` → `sensors_init` → `net_init(force)` → `ui_run()`.
 

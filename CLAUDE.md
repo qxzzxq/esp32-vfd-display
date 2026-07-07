@@ -39,8 +39,9 @@ Strap pins GPIO2/8/9 are deliberately unused — do not assign them.
 Modules in `src/` (see `docs/DESIGN.md` for APIs): `encoder` (GPIO-ISR quadrature — the
 C3 has no PCNT), `settings` (NVS namespace `vfdclk` + timezone table), `sensors` (I2C
 AHT20/BMP280), `weather` (Open-Meteo + cJSON), `net` (WiFi STA/portal, SNTP, worker task),
-`web` (one esp_http_server: captive portal or `/api/*`), `ui` (pages + menu state machine),
-plus the existing `VFDDisplay` driver (unchanged).
+`web` (one esp_http_server: captive portal or `/api/*`), `ui` (thin shell over the pure,
+host-tested core in `src/ui/`: UiFsm + pages + menu items), plus the existing `VFDDisplay`
+driver (unchanged).
 
 Concurrency: UI task (= app_main) blocks on the encoder queue with a 100 ms render tick and
 is the **only** task that touches the VFD; a worker task in `net.cpp` polls sensors (10 s)
