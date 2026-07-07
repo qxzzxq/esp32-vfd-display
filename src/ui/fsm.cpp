@@ -121,9 +121,10 @@ void UiFsm::render_hold_bar(char line[17], int64_t held_us) const {
     char bar[UI_HOLD_BAR_SEGS + 1];
     for (int i = 0; i < UI_HOLD_BAR_SEGS; i++) bar[i] = i < filled ? '=' : ' ';
     bar[UI_HOLD_BAR_SEGS] = '\0';
-    // Trailing spaces pad out to the full 16 chars (snprintf truncates); a
-    // short write would leave stale characters on the right of the display.
-    snprintf(line, 17, "%s [%s]          ", mode_ == Mode::Pages ? "MENU" : "EXIT", bar);
+    // Label on the left, bracketed bar flush with the right edge; the
+    // computed pad keeps the full 16 chars written for any segment count.
+    snprintf(line, 17, "%-*s[%s]", 16 - (UI_HOLD_BAR_SEGS + 2),
+             mode_ == Mode::Pages ? "MENU" : "EXIT", bar);
 }
 
 void UiFsm::render_portal_banner(char line[17], int64_t now_us, const UiSnapshot& s) {
