@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "sensors.h"
 #include "settings.h"
+#include "weather.h"
 #include "web.h"
 
 static const char* TAG = "net";
@@ -26,11 +27,33 @@ static char s_ap_ssid[16] = "VFD-????";
 static esp_timer_handle_t s_reconnect_timer;
 static uint32_t s_backoff_ms = 1000;
 
-// Polls producers; weather (15 min cadence) joins this loop at M5.
+// Polls the producers on a 1 s tick: sensors every 10 s; weather every
+// 15 min once Connected and lat/lon are set, retrying after 2 min on
+// failure (max 3 retries, then wait for the next 15-min slot).
 static void worker_task(void*) {
+    uint32_t tick = 0;
+    uint32_t weather_due = 0;
+    uint8_t weather_retries = 0;
     while (1) {
-        sensors_read();
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        if (tick % 10 == 0) sensors_read();
+
+        if (tick >= weather_due) {
+            Settings st = settings_get();
+            if (s_state != NetState::Connected || !st.lat[0] || !st.lon[0]) {
+                weather_due = tick + 1;  // not ready; re-check next tick
+            } else if (weather_fetch(st.lat, st.lon)) {
+                weather_due = tick + 900;
+                weather_retries = 0;
+            } else if (++weather_retries <= 3) {
+                weather_due = tick + 120;
+            } else {
+                weather_due = tick + 900;
+                weather_retries = 0;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        tick++;
     }
 }
 
@@ -138,7 +161,8 @@ void net_init(bool force_portal) {
     else
         start_sta();
 
-    xTaskCreate(worker_task, "worker", 6144, nullptr, 3, nullptr);
+    // 8 KB: weather_fetch runs the TLS handshake on this stack (~5 KB peak).
+    xTaskCreate(worker_task, "worker", 8192, nullptr, 3, nullptr);
 }
 
 NetState net_state() {
