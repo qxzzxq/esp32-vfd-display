@@ -232,8 +232,11 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   *Verified on hardware:* captive portal provisioning from a phone (AP `VFD-1111`),
   joins home WiFi, time live in configured TZ; menu WIFI RESET returns to portal.
   Not yet exercised: boot-hold (hold SW ≥3 s at power-on) recovery path.
-- **M5 — Weather**: OUTDOOR page. *Verify:* values match open-meteo.com for same
-  coordinates; unplug router → stale `?`, recovers on reconnect.
+- **M5 — Weather** ✅ (2026-07-07): OUTDOOR page + `weather` module + worker cadence.
+  *Verified on hardware:* live OUTDOOR readings; router unplug → stale `?` marker
+  appears. Not yet exercised: recovery on reconnect (expect fresh values and the
+  `?` gone within ~15 min of the router returning); values not formally
+  cross-checked against open-meteo.com.
 - **M6 — HTTP API + custom page**: *Verify:* `curl -X POST http://<ip>/api/message -d
   '{"text":"HELLO"}'` shows page; 65-char text → 400; long text marquees; survives
   reboot; `GET /api/status` sane.
