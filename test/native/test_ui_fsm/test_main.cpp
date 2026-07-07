@@ -74,15 +74,15 @@ static void test_click_on_pages_is_unassigned(void) {
 static void test_hold_bar_timeline_and_menu_entry(void) {
     FsmDriver d;
     d.feed(UiInput::BtnDown);
-    // Clicks stay visually clean: no bar below 600 ms.
-    assert_line(d.idle(5), TIME_LINE);  // held 500 ms
-    assert_line(d.idle(1), "MENU [         ]");  // held 600 ms, bar appears empty
-    assert_line(d.idle(4), "MENU [====     ]");  // held 1.0 s
-    assert_line(d.idle(4), "MENU [======== ]");  // held 1.4 s
+    // Clicks stay visually clean: no bar below 500 ms.
+    assert_line(d.idle(4), TIME_LINE);  // held 400 ms
+    assert_line(d.idle(1), "MENU     [     ]");  // held 500 ms, bar appears empty
+    assert_line(d.idle(2), "MENU     [==   ]");  // held 700 ms
+    assert_line(d.idle(2), "MENU     [==== ]");  // held 900 ms
     // Threshold tick: completed bar is drawn, the fire is signalled for the
     // shell's 200 ms pause, and the menu is entered at item 0.
-    d.idle(1);  // held 1.5 s
-    assert_line(d.out, "MENU [=========]");
+    d.idle(1);  // held 1.0 s
+    assert_line(d.out, "MENU     [=====]");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);
     assert_line(d.idle(), MENU_BRIGHT);
@@ -98,13 +98,13 @@ static void test_release_after_fire_is_swallowed(void) {
 }
 
 static void test_release_exactly_at_threshold_is_lost(void) {
-    // Pre-refactor quirk: BtnUp landing exactly at the 1.5 s threshold before
+    // Pre-refactor quirk: BtnUp landing exactly at the 1.0 s threshold before
     // a tick fired means no click AND no fire — the press is lost.
     FsmDriver d;
     d.idle();
     d.feed(UiInput::BtnDown);
-    d.idle(14);  // held 1.4 s, not fired yet
-    d.now_us += 100000;  // held exactly 1.5 s
+    d.idle(9);  // held 0.9 s, not fired yet
+    d.now_us += 100000;  // held exactly 1.0 s
     assert_line(d.feed(UiInput::BtnUp), TIME_LINE);  // still on pages
     TEST_ASSERT_FALSE(d.out.hold_fired);
     assert_no_effects(d.out);
@@ -116,7 +116,7 @@ static void test_rotation_while_held_still_steps(void) {
     d.idle(3);  // held 300 ms, no bar yet
     assert_line(d.feed(UiInput::StepCW), DATE_LINE);
     // The bar keeps filling from the original press.
-    assert_line(d.idle(4), "MENU [=        ]");  // held 700 ms
+    assert_line(d.idle(4), "MENU     [==   ]");  // held 700 ms
 }
 
 static void test_menu_step_wraps(void) {
@@ -158,7 +158,7 @@ static void test_long_press_from_menu_exits_without_effects(void) {
     FsmDriver d;
     enter_menu(d);
     d.long_press();
-    assert_line(d.out, "EXIT [=========]");
+    assert_line(d.out, "EXIT     [=====]");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);  // nothing to undo from Menu mode
     assert_line(d.idle(), TIME_LINE);
@@ -177,10 +177,10 @@ static void test_long_press_from_edit_restores_brightness(void) {
 
 static void test_menu_timeout_anchored_at_button_down(void) {
     // Pre-refactor quirk: the inactivity clock starts at BtnDown, so the
-    // menu times out 20 s after the press began — ~18.5 s after it opened.
+    // menu times out 20 s after the press began — ~19 s after it opened.
     FsmDriver d;
-    d.long_press();  // BtnDown at T, menu at T+1.5 s
-    assert_line(d.idle(185), MENU_BRIGHT);  // T+20.0 s: '>' comparison, still menu
+    d.long_press();  // BtnDown at T, menu at T+1.0 s
+    assert_line(d.idle(190), MENU_BRIGHT);  // T+20.0 s: '>' comparison, still menu
     assert_line(d.idle(1), TIME_LINE);      // T+20.1 s: timed out
     assert_no_effects(d.out);
 }
@@ -223,8 +223,8 @@ static void test_portal_banner_only_on_pages_and_below_hold_bar(void) {
     d.snap.net = UiNetState::Portal;
     // The hold bar overrides the banner...
     d.feed(UiInput::BtnDown);
-    assert_line(d.idle(6), "MENU [         ]");
-    d.idle(9);  // fire into the menu
+    assert_line(d.idle(5), "MENU     [     ]");
+    d.idle(5);  // fire into the menu
     // ...and the menu renders normally with the portal active.
     assert_line(d.idle(), MENU_BRIGHT);
 }

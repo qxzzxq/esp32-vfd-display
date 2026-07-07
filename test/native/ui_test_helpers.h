@@ -84,10 +84,10 @@ struct FsmDriver {
     }
 
     // Hold the button through idle ticks until the long-press fires at the
-    // 1.5 s threshold. The release is deliberately not sent (it is swallowed).
+    // 1.0 s threshold. The release is deliberately not sent (it is swallowed).
     const UiOutput& long_press() {
         feed(UiInput::BtnDown);
-        return idle(15);
+        return idle(10);
     }
 };
 
