@@ -71,7 +71,8 @@ own their data and expose copy-out getters — no global state struct, no cross-
 - **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms)`; event → input
   handling, timeout → re-render (clock seconds, edit-mode blink, marquee, auto-cycle).
   Only this task touches the VFD.
-- **Worker task** (in `net.cpp`, prio 3, ~6 KB stack): 1 s loop; sensors every 10 s;
+- **Worker task** (in `net.cpp`, prio 3, 8 KB stack — the in-task TLS handshake of
+  `weather_fetch` peaks ~5 KB): 1 s loop; sensors every 10 s;
   weather every 15 min when Connected and lat/lon set (retry after 2 min on failure,
   max 3 retries per slot).
 - **ISRs**: encoder rotation + button as above → queue (`xQueueSendFromISR`; drops when
@@ -176,8 +177,8 @@ Namespace `vfdclk`:
 `GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,uv_index`
 — free, no API key, ~400 B JSON, parsed with cJSON. Fetched every 15 min. HTTPS via
 `esp_http_client` + `esp_crt_bundle_attach`.
-Verify at M5 that `uv_index` is accepted in `current=`; fallback:
-`hourly=uv_index&forecast_days=1` and pick the current hour.
+**Verified at M5** (2026-07-07, curl): `uv_index` is accepted in `current=` — the
+`hourly=uv_index&forecast_days=1` fallback is not needed.
 
 ## Build config changes (at M0)
 
@@ -246,7 +247,8 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
    subset; if not, custom partition CSV (check at M0).
 2. `esp_netif_sntp.h` component home (esp_netif vs lwip) — both in PRIV_REQUIRES,
    self-resolving at first build.
-3. Open-Meteo `current=uv_index` support — verify with curl at M5; hourly fallback above.
+3. ~~Open-Meteo `current=uv_index` support~~ — verified working at M5 (2026-07-07);
+   no hourly fallback needed.
 4. VFD lowercase glyphs unverified — design is uppercase-only.
 5. No automatic portal fallback after repeated STA failures — deliberate; revisit if it
    annoys in practice.
