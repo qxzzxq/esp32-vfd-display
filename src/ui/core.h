@@ -33,6 +33,12 @@ struct UiSnapshot {
     float rh;           // indoor relative humidity, %
     float hPa;          // pressure; NAN when BMP280 absent or read failed
     bool has_pressure;  // BMP280 probed OK at boot (gates the PRESSURE page)
+    bool has_location;      // lat/lon configured; false ⇒ OUTDOOR shows SET LOCATION
+    bool weather_ok;        // at least one successful Open-Meteo fetch
+    float out_tC;           // outdoor temperature, deg C
+    float out_rh;           // outdoor relative humidity, %
+    float out_uv;           // UV index
+    uint32_t weather_age_s; // seconds since the last successful fetch (staleness)
     UiNetState net;
     char ap_ssid[16];   // provisioning AP name (portal banner)
     char ip[16];        // STA IP; reserved for the M7 STATUS item

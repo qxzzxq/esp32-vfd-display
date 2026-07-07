@@ -14,6 +14,7 @@ void tearDown(void) {}
 static const char* TIME_LINE = "    14:25:36    ";
 static const char* DATE_LINE = " SAT 2026-07-05 ";
 static const char* INDOOR_LINE = "IN  23.4C   47% ";
+static const char* OUTDOOR_LINE = "OUT 31C 60% UV9 ";
 static const char* PRESSURE_LINE = "PRES 1013.2 hPa ";
 static const char* MENU_BRIGHT = ">BRIGHT        8";
 static const char* EDIT_BRIGHT_8 = " BRIGHT       >8";
@@ -50,6 +51,7 @@ static void test_step_cycles_pages_and_wraps(void) {
     FsmDriver d;
     assert_line(d.feed(UiInput::StepCW), DATE_LINE);
     assert_line(d.feed(UiInput::StepCW), INDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), OUTDOOR_LINE);
     assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);
     assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // wraps forward
     assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);  // wraps backward
@@ -60,8 +62,9 @@ static void test_step_skips_pressure_without_bmp280(void) {
     d.snap.has_pressure = false;
     d.feed(UiInput::StepCW);  // DATE
     d.feed(UiInput::StepCW);  // INDOOR
+    d.feed(UiInput::StepCW);  // OUTDOOR
     assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // skips PRESSURE
-    assert_line(d.feed(UiInput::StepCCW), INDOOR_LINE);  // skips backward too
+    assert_line(d.feed(UiInput::StepCCW), OUTDOOR_LINE);  // skips backward too
 }
 
 static void test_click_on_pages_is_unassigned(void) {

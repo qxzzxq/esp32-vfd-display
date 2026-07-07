@@ -51,6 +51,33 @@ class IndoorPage : public UiPage {
     }
 };
 
+class OutdoorPage : public UiPage {
+  public:
+    void render(char line[17], const UiSnapshot& s, int64_t) const override {
+        if (!s.has_location) {
+            snprintf(line, 17, "SET LOCATION    ");
+            return;
+        }
+        if (!s.weather_ok) {
+            snprintf(line, 17, "OUT NO DATA     ");
+            return;
+        }
+        // %3.0f keeps the widest realistic line ("OUT-10C100% UV11") at 16;
+        // typical values render as "OUT 31C 60% UV9".
+        int n = snprintf(line, 17, "OUT%3.0fC%3.0f%% UV%.0f", s.out_tC, s.out_rh,
+                         s.out_uv);
+        if (s.weather_age_s > STALE_S) {
+            if (n > 15) n = 15;  // full line: sacrifice the last char
+            line[n++] = '?';
+        }
+        for (; n < 16; n++) line[n] = ' ';
+        line[16] = '\0';
+    }
+
+  private:
+    static constexpr uint32_t STALE_S = 45 * 60;  // > 3 missed 15-min fetches
+};
+
 class PressurePage : public UiPage {
   public:
     void render(char line[17], const UiSnapshot& s, int64_t) const override {
@@ -65,9 +92,10 @@ class PressurePage : public UiPage {
 TimePage s_time;
 DatePage s_date;
 IndoorPage s_indoor;
+OutdoorPage s_outdoor;
 PressurePage s_pressure;
 
-UiPage* const s_pages[] = {&s_time, &s_date, &s_indoor, &s_pressure};
+UiPage* const s_pages[] = {&s_time, &s_date, &s_indoor, &s_outdoor, &s_pressure};
 
 }  // namespace
 
