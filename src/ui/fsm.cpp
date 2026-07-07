@@ -115,13 +115,15 @@ void UiFsm::render(char line[17], int64_t now_us, const UiSnapshot& s) const {
 
 void UiFsm::render_hold_bar(char line[17], int64_t held_us) const {
     // Hold progress bar (pages: enter menu; menu: exit), full at the threshold
-    int filled = (int)((held_us - UI_HOLD_SHOW_US) * 9 /
+    int filled = (int)((held_us - UI_HOLD_SHOW_US) * UI_HOLD_BAR_SEGS /
                        (UI_LONG_PRESS_US - UI_HOLD_SHOW_US));
-    if (filled > 9) filled = 9;
-    char bar[10];
-    for (int i = 0; i < 9; i++) bar[i] = i < filled ? '=' : ' ';
-    bar[9] = '\0';
-    snprintf(line, 17, "%s [%s]", mode_ == Mode::Pages ? "MENU" : "EXIT", bar);
+    if (filled > UI_HOLD_BAR_SEGS) filled = UI_HOLD_BAR_SEGS;
+    char bar[UI_HOLD_BAR_SEGS + 1];
+    for (int i = 0; i < UI_HOLD_BAR_SEGS; i++) bar[i] = i < filled ? '=' : ' ';
+    bar[UI_HOLD_BAR_SEGS] = '\0';
+    // Trailing spaces pad out to the full 16 chars (snprintf truncates); a
+    // short write would leave stale characters on the right of the display.
+    snprintf(line, 17, "%s [%s]          ", mode_ == Mode::Pages ? "MENU" : "EXIT", bar);
 }
 
 void UiFsm::render_portal_banner(char line[17], int64_t now_us, const UiSnapshot& s) {

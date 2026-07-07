@@ -97,17 +97,17 @@ pauses auto-cycle for 30 s):
 | 5 | CUSTOM   | POST'd text; >16 ch → marquee, 1 char / 300 ms | skipped in rotation when empty |
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
-**Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.5 s, fires
-while held; `MENU [====     ]` progress bar appears after 0.6 s) = enter menu. Click on
+**Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
+while held; `MENU [==   ]    ` progress bar appears after 0.5 s) = enter menu. Click on
 the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
 `WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
 
 **Menu**: rotate = move between items; click = enter edit (the `>` cursor moves to the
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
 immediate `settings_save` + live apply; 20 s inactivity or long-press = exit to pages
-(abandons an uncommitted edit). Holding the button shows a progress bar after 0.6 s
-(`EXIT [====     ]`, one `=` per 100 ms render tick) and the exit fires at 1.5 s while
-still held.
+(abandons an uncommitted edit). Holding the button shows a progress bar after 0.5 s
+(`EXIT [==   ]    `, 5 segments, one `=` per 100 ms render tick) and the exit fires at
+1.0 s while still held.
 
 ```
 >BRIGHT      13      0..15 → driver 0..240 (×16); clamp min 1 while editing; applied live
