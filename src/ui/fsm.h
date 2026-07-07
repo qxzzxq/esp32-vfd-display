@@ -24,12 +24,15 @@ class UiFsm {
         : pages_(pages), page_count_(page_count), items_(items), item_count_(item_count) {}
 
     // Process one input at monotonic time now_us. *out is fully rewritten.
+    // Internally works on a copy of s: a committing menu item updates that
+    // view so the tick's render already shows the committed value (the
+    // persist effect only executes after the shell draws the line).
     void tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out);
 
   private:
     enum class Mode : uint8_t { Pages, Menu, Edit };
 
-    void handle_click(const UiSnapshot& s, UiOutput& out);
+    void handle_click(UiSnapshot& s, UiOutput& out);
     void handle_step(int dir, const UiSnapshot& s, UiOutput& out);
     // Leave Menu/Edit for the pages, letting an active edit undo its
     // transient side effects. Single home for what the pre-refactor code

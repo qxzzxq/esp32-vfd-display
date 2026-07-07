@@ -31,8 +31,11 @@ class MenuItem {
     virtual bool edit_step(int, const UiSnapshot&, UiOutput&) { return true; }
 
     // Click while editing = commit. Return true to leave editing back to the
-    // menu.
-    virtual bool edit_click(const UiSnapshot&, UiOutput&) { return true; }
+    // menu. The snapshot is the FSM's mutable per-tick view: a committing
+    // item must write its new value into it so this tick already renders the
+    // committed state — the persist effect only executes after the draw, and
+    // rendering from the stale view would flash the previous value.
+    virtual bool edit_click(UiSnapshot&, UiOutput&) { return true; }
 
     // Edit abandoned (menu timeout or long-press exit): undo any transient
     // side effects (BRIGHT: restore the saved brightness). Nothing to persist.

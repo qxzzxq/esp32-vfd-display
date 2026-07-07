@@ -35,8 +35,9 @@ class BrightItem : public MenuItem {
         out.emit(UiEffect::Type::SetBrightness, (uint8_t)(val_ * 16));  // live preview
         return true;
     }
-    bool edit_click(const UiSnapshot&, UiOutput& out) override {
-        out.emit(UiEffect::Type::CommitBrightness, (uint8_t)(val_ * 16));
+    bool edit_click(UiSnapshot& s, UiOutput& out) override {
+        s.bright = (uint8_t)(val_ * 16);  // view first, so this tick renders it
+        out.emit(UiEffect::Type::CommitBrightness, s.bright);
         return true;
     }
     void edit_abort(const UiSnapshot& s, UiOutput& out) override {
@@ -63,7 +64,7 @@ class WifiResetItem : public MenuItem {
     bool edit_step(int, const UiSnapshot&, UiOutput&) override {
         return false;  // rotate = cancel the confirm
     }
-    bool edit_click(const UiSnapshot&, UiOutput& out) override {
+    bool edit_click(UiSnapshot&, UiOutput& out) override {
         out.emit(UiEffect::Type::WifiReset);
         return true;
     }

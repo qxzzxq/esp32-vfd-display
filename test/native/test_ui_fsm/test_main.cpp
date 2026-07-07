@@ -145,8 +145,11 @@ static void test_bright_edit_commit_flow(void) {
     assert_single_effect(d.out, UiEffect::Type::SetBrightness, 144);  // live preview
     d.click();  // commit
     assert_single_effect(d.out, UiEffect::Type::CommitBrightness, 144);
-    // Back in the menu; once the shell persists (snapshot catches up), the
-    // highlighted item shows the new value.
+    // The commit tick must already show the committed value — the persist
+    // effect runs after the draw, so the item updates the tick's view
+    // (regression: the menu flashed the previous value for one tick).
+    assert_line(d.out, ">BRIGHT        9");
+    // Once the shell persists (snapshot catches up), it stays the new value.
     d.snap.bright = 144;
     assert_line(d.idle(), ">BRIGHT        9");
 }
