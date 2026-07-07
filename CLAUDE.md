@@ -14,6 +14,7 @@ The `pio` CLI is not on PATH:
 ~/.platformio/penv/bin/pio run -e seeed_xiao_esp32c3 -t upload  # flash (esp-builtin USB-JTAG)
 ~/.platformio/penv/bin/pio device monitor                       # serial monitor
 ~/.platformio/penv/bin/pio run -t menuconfig                    # IDF menuconfig
+~/.platformio/penv/bin/pio test -e native                       # host unit tests (UI core)
 ```
 
 - Console is **USB-Serial-JTAG, not UART0** (GPIO21/20 are repurposed as VFD DIN / encoder SW).
@@ -52,6 +53,9 @@ and weather (15 min). Every screen is 16 uppercase ASCII chars.
   files are picked up automatically (GLOB_RECURSE).
 - Plain C++ classes / ESP-IDF C APIs, no frameworks. Producer modules own their data and
   expose copy-out getters. Match the style of `VFDDisplay.{h,cpp}`.
+- `src/ui/` is the pure UI core: nothing under it may include anything outside `src/ui/`
+  or libc (no ESP-IDF/FreeRTOS/project headers), so it compiles on the host. It is covered
+  by the Unity suites in `test/native/` — run `pio test -e native` after touching it.
 - clangd/IDE shows false "file not found" errors for IDF headers until a build regenerates
   `compile_commands.json` — trust the pio build.
 

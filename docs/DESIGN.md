@@ -57,6 +57,12 @@ own their data and expose copy-out getters — no global state struct, no cross-
   API mode (STA): `/api/message`, `/api/status`.
 - **`ui.{h,cpp}`** — page rendering + menu state machine; sole owner of the `VFDDisplay`
   instance. `ui_run()` never returns.
+- **`ui/` (pure UI core)** — host-testable UI logic: `UiFsm` (Pages/Menu/Edit modes,
+  click vs long-press recognition, menu timeout, overlay priority) plus the `UiPage` /
+  `MenuItem` interfaces and their concrete singletons. Libc includes only — no
+  ESP-IDF/FreeRTOS/project headers. Consumes a per-tick `UiSnapshot` built by the shell,
+  returns the 16-char line + `UiEffect` list. `ui.cpp` becomes a thin shell over it in
+  the second refactor PR.
 - **`main.cpp`** — boot: `nvs_flash_init` → `settings_init` → boot-hold check on GPIO20
   (3 s low → force portal) → `encoder_init` → `sensors_init` → `net_init(force)` → `ui_run()`.
 
@@ -193,6 +199,14 @@ Verify at M5 that `uv_index` is accepted in `current=`; fallback:
   the sdkconfig option is kept only for consistency.
 - Partition tradeoff: single-app-large = no OTA, USB reflash only — accepted for a desk
   clock; OTA later means a custom CSV with two ~1.6 MB slots (fits in 4 MB).
+
+## Host unit tests
+
+The pure UI core (`src/ui/`) is covered by Unity suites under `test/native/`, run on the
+host with `pio test -e native` — no hardware needed. `[env:native]` compiles only
+`src/ui/` into the test program (`build_src_filter`), so the rest of `src/` never touches
+the host toolchain. The golden strings in the suites are transcribed from the
+pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
 
 ## Milestones (each hardware-verifiable)
 
