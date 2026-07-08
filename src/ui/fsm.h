@@ -41,11 +41,13 @@ class UiFsm {
     void render(char line[17], int64_t now_us, const UiSnapshot& s) const;
     void render_hold_bar(char line[17], int64_t held_us) const;
     static void render_portal_banner(char line[17], int64_t now_us, const UiSnapshot& s);
-    // Roll animation: detect an opted-in content change (TIME second tick —
-    // all changed cells roll in lockstep; page changes snap), then composite
-    // the active roll into line/out->glyphs. Only called for un-overlaid
-    // Pages-mode frames; line holds the target content on entry.
-    void apply_roll(char line[17], int64_t now_us, UiOutput* out);
+    // Page-transition animation: a page change starts a dimming crossfade; an
+    // opted-in same-page content change (TIME second tick) rolls its changed
+    // cells in lockstep. Composites the active animation into line/out->glyphs
+    // and emits the crossfade's brightness effects. Only called for un-overlaid
+    // Pages-mode frames; line holds the incoming target content on entry.
+    void apply_transition(char line[17], int64_t now_us, uint8_t bright, UiOutput* out);
+    void apply_fade(char line[17], int64_t now_us, uint8_t bright, UiOutput* out);
     static void default_glyphs(UiOutput* out);
 
     UiPage* const* pages_;
@@ -68,8 +70,22 @@ class UiFsm {
         char from[17] = {};
     };
     RollState roll_;
-    uint8_t prev_page_ = 0xFF;     // 0xFF = no valid pages frame to roll from
-    char prev_content_[17] = {};   // last Pages-mode logical (pre-roll) content
+
+    // Active page-transition crossfade, in two protected phases. Out dims the
+    // outgoing page ('from') to black and always runs to completion — a page
+    // change during it only retargets which page dims in. In dims the incoming
+    // page (in line) back up and is interruptible — a page change restarts it
+    // from black for the new page, so a fast scrub shows each page rising from
+    // 0 rather than the previous one snapping back to full.
+    struct FadeState {
+        enum class Phase : uint8_t { Idle, Out, In };
+        Phase phase = Phase::Idle;
+        int64_t start_us = 0;  // start of the current phase
+        char from[17] = {};    // outgoing page, shown throughout Out
+    };
+    FadeState fade_;
+    uint8_t prev_page_ = 0xFF;     // 0xFF = no valid pages frame to animate from
+    char prev_content_[17] = {};   // last Pages-mode logical (pre-animation) content
 };
 
 #endif

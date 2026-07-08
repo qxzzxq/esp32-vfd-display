@@ -107,4 +107,13 @@ constexpr int UI_HOLD_BAR_SEGS = 5;
 constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel
 constexpr int64_t UI_ROLL_STEP_US = 40 * 1000LL;
 
+// Dimming crossfade for page transitions, one half-period per phase. The
+// outgoing page dims saved-level -> 0 (Out), the DCRAM content swaps at black,
+// then the incoming page dims 0 -> saved-level (In). Driven by SetBrightness
+// effects at the 40 ms tick; touches no CGRAM, so unlike the roll it animates
+// a whole 16-cell page change (which is why the roll page-transition was
+// dropped). Out always completes; a page change mid-In restarts In from black
+// (see UiFsm::FadeState).
+constexpr int64_t UI_FADE_HALF_US = 300 * 1000LL;  // per direction; 0.6 s total
+
 #endif

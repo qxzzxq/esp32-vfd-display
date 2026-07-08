@@ -110,26 +110,39 @@ per-frame composites — the diff-upload restores the bar/arrow patterns afterwa
 In this document's screen mockups, `>` stands for the arrow glyph and `=` for bar-fill
 blocks.
 
-**Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll state in `UiFsm`): vertical
-split-flap roll — a cell's old glyph exits through the top while the new one enters from
-below (one blank gap row between them), 8 steps × 40 ms ≈ 320 ms, all changed cells in
-lockstep, composited into CGRAM from an embedded 5×7 font (full printable ASCII; shapes
-match the CGROM so the hand-off at the roll's end is seamless — patch `font5x7.cpp` by
-eye if a glyph pops).
+**Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll and fade state in `UiFsm`).
+Two kinds: a vertical split-flap **roll** for same-page content changes, and a dimming
+**crossfade** for page changes. The roll travels a cell's old glyph out through the top
+while the new one enters from below (one blank gap row between them), 8 steps × 40 ms ≈
+320 ms, all changed cells in lockstep, composited into CGRAM from an embedded 5×7 font
+(full printable ASCII; shapes match the CGROM so the hand-off at the roll's end is
+seamless — patch `font5x7.cpp` by eye if a glyph pops).
 
-- **Trigger**: same-page content changes for pages opting in via
+- **Roll trigger**: same-page content changes for pages opting in via
   `UiPage::rolls_on_change()` — TIME only (seconds tick, rollovers); other pages and the
-  CUSTOM marquee deliberately don't animate. **Page changes snap** — a page-transition
-  roll was tried and removed: 16 cells need more simultaneous composites than the
-  8-glyph CGRAM can hold, and a partially-animated line reads as broken.
+  CUSTOM marquee deliberately don't animate. Page *changes* don't roll — a page-transition
+  roll was tried and dropped (16 cells need more simultaneous composites than the 8-glyph
+  CGRAM can hold, and a partially-animated line reads as broken); they crossfade instead.
 - **Slot budget**: CGRAM slots are keyed by the visible old→new chars, so cells rolling
   the same chars share one slot (a `11:11:11 → 22:22:22` rollover uses a single slot for
   all six digits). With > 7 distinct pairs (only the 24H format flip in practice) the
   excess cells hold the old char and flip at the midpoint.
-- **Interactions**: any input snaps the roll to its target before it is processed; the
+- **Roll interactions**: any input snaps the roll to its target before it is processed; the
   hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
   (returning to the pages snaps). The roll target is recomputed live each tick, so a
   second flipping mid-roll retargets in flight.
+- **Page-transition crossfade** (`UI_FADE_HALF_US`): every page change dims the outgoing
+  page to black over 300 ms via the driver's dimming register (`setBrightness`, 240-level
+  duty; 0 = 0/255 duty = fully dark), swaps the line at black, then dims the incoming page
+  back to the saved brightness over another 300 ms. Driven by `SetBrightness` effects at
+  the 40 ms tick and using **no CGRAM**, so unlike the roll it animates a whole 16-cell
+  page. Applies to manual steps, the CUSTOM message jump, and unavailable-page auto-advance
+  alike. Two protected phases (`FadeState`): the dim-**out** always runs to completion — a
+  page change during it only *retargets* which page dims in, never restarting it — while
+  the dim-**in** is interruptible, a page change restarting it from black for the new page.
+  So a fast scrub shows the first page dim fully out, then each subsequent page rise from 0
+  (never the previous one snapping back to full). An overlay (hold bar / portal / menu)
+  taking over ends the fade and restores brightness so it never renders dim.
 
 **Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
 pauses auto-cycle for 30 s):
@@ -297,7 +310,8 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
   vertical-roll animation (TIME digits — done, v0.10.0; a page-change roll was
-  tried and removed after hardware testing, see "Animations"). *Verify:* overnight
+  tried and removed after hardware testing, replaced by a dimming crossfade for
+  page transitions — done, v0.11.0; see "Animations"). *Verify:* overnight
   soak — no reboots, clock correct, heap stable (via /api/status).
 
 ## Open questions / risks

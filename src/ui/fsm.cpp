@@ -69,18 +69,25 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
 
     render(out->line, now_us, view);
 
-    // Roll only un-overlaid Pages-mode content; any other frame (menu, hold
-    // bar, portal banner) invalidates the roll-from state so the first pages
-    // frame afterwards snaps instead of animating from stale content.
+    // Animate only un-overlaid Pages-mode content; any other frame (menu, hold
+    // bar, portal banner) invalidates the from state so the first pages frame
+    // afterwards snaps instead of animating from stale content. A crossfade
+    // caught by an overlay is ended here with brightness restored, so the
+    // overlay never renders dim.
     bool hold_visible =
         press_start_us_ >= 0 && now_us - press_start_us_ >= UI_HOLD_SHOW_US;
     if (mode_ == Mode::Pages && !hold_visible && view.net != UiNetState::Portal) {
-        apply_roll(out->line, now_us, out);
+        apply_transition(out->line, now_us, view.bright, out);
     } else {
         roll_.active = false;
+        if (fade_.phase != FadeState::Phase::Idle) {
+            fade_.phase = FadeState::Phase::Idle;
+            out->emit(UiEffect::Type::SetBrightness, view.bright);
+        }
         prev_page_ = 0xFF;
     }
-    out->animating = roll_.active || hold_visible;
+    out->animating =
+        roll_.active || fade_.phase != FadeState::Phase::Idle || hold_visible;
 
     // Long-press fires while still held: from the pages it opens the menu,
     // from the menu it escapes. render() has just drawn the completed bar
@@ -188,23 +195,38 @@ void UiFsm::default_glyphs(UiOutput* out) {
         memcpy(out->glyphs[UI_GLYPHS[i].slot], UI_GLYPHS[i].cols, 5);
 }
 
-void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
-    // Trigger: an opted-in same-page content change (TIME second tick) rolls
-    // its changed cells. Page changes snap — animating a whole page
-    // transition was tried and dropped: 16 cells need more simultaneous
-    // composites than the 8-glyph CGRAM can hold.
-    if (prev_page_ != 0xFF) {
-        if (page_ != prev_page_) {
-            roll_.active = false;  // new page: drop any roll and snap
-        } else if (!roll_.active && pages_[page_]->rolls_on_change() &&
-                   strcmp(line, prev_content_) != 0) {
-            roll_.active = true;
-            roll_.start_us = now_us;
-            memcpy(roll_.from, prev_content_, 17);
+void UiFsm::apply_transition(char line[17], int64_t now_us, uint8_t bright,
+                             UiOutput* out) {
+    // A page change crossfades; an opted-in same-page content change (TIME
+    // second tick) rolls. The crossfade has two protected phases: the outgoing
+    // page always dims fully out (a page change mid-dim-out only retargets the
+    // page that will dim in), then the incoming page dims in (a page change
+    // mid-dim-in restarts it from black for the new page). The roll can't span
+    // a whole page (7-slot CGRAM), so page changes never roll.
+    using Phase = FadeState::Phase;
+    if (prev_page_ != 0xFF && page_ != prev_page_) {
+        if (fade_.phase == Phase::In) {
+            fade_.start_us = now_us;  // interrupt: dim the new page in from black
+        } else if (fade_.phase == Phase::Idle) {
+            roll_.active = false;     // settled: dim the outgoing page out first
+            fade_.phase = Phase::Out;
+            fade_.start_us = now_us;
+            memcpy(fade_.from, prev_content_, 17);
         }
+        // phase == Out: keep dimming the same page out; this step just retargets.
+    } else if (prev_page_ != 0xFF && fade_.phase == Phase::Idle && !roll_.active &&
+               pages_[page_]->rolls_on_change() && strcmp(line, prev_content_) != 0) {
+        roll_.active = true;
+        roll_.start_us = now_us;
+        memcpy(roll_.from, prev_content_, 17);
     }
     prev_page_ = page_;
-    memcpy(prev_content_, line, 17);  // always the logical target
+    memcpy(prev_content_, line, 17);  // always the logical (incoming) target
+
+    if (fade_.phase != Phase::Idle) {
+        apply_fade(line, now_us, bright, out);
+        return;
+    }
     if (!roll_.active) return;
 
     int64_t elapsed = now_us - roll_.start_us;
@@ -249,4 +271,34 @@ void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
         }
         line[i] = (char)(p + 1);
     }
+}
+
+void UiFsm::apply_fade(char line[17], int64_t now_us, uint8_t bright,
+                       UiOutput* out) {
+    // Each phase ramps brightness across UI_FADE_HALF_US, scaling the saved
+    // level so the fade honours the current BRIGHT setting.
+    using Phase = FadeState::Phase;
+    int64_t elapsed = now_us - fade_.start_us;
+    if (fade_.phase == Phase::Out) {
+        if (elapsed < UI_FADE_HALF_US) {
+            memcpy(line, fade_.from, 17);  // outgoing page, dimming out
+            out->emit(UiEffect::Type::SetBrightness,
+                      (uint8_t)((int64_t)bright * (UI_FADE_HALF_US - elapsed) /
+                                UI_FADE_HALF_US));
+            return;
+        }
+        // Dim-out done: hand off to the dim-in of the incoming page (in line),
+        // carrying any overshoot so the envelope stays continuous.
+        fade_.phase = Phase::In;
+        fade_.start_us += UI_FADE_HALF_US;
+        elapsed = now_us - fade_.start_us;
+    }
+    // Phase::In — line already holds the incoming page.
+    if (elapsed >= UI_FADE_HALF_US) {
+        fade_.phase = Phase::Idle;
+        out->emit(UiEffect::Type::SetBrightness, bright);  // restore saved level
+        return;
+    }
+    out->emit(UiEffect::Type::SetBrightness,
+              (uint8_t)((int64_t)bright * elapsed / UI_FADE_HALF_US));
 }

@@ -1,8 +1,9 @@
 // Roll-animation tests: the 5x7 font, the split-flap frame compositor, the
 // UiOutput glyph channel, and the FSM roll trigger (opted-in content changes
 // — TIME ticks — roll their changed cells in lockstep with slot sharing;
-// page changes snap; input snaps a roll; overlays suppress it). Timelines
-// advance in the shell's 40 ms animation frames via FsmDriver::idle_us/settle.
+// input snaps a roll; overlays suppress it). Page changes crossfade instead of
+// rolling — that envelope is pinned in test_ui_fade. Timelines advance in the
+// shell's 40 ms animation frames via FsmDriver::idle_us/settle.
 #include <string.h>
 #include <unity.h>
 
@@ -17,8 +18,6 @@ void tearDown(void) {}
 static const char* TIME_LINE = "    14:25:36    ";
 static const char* DATE_LINE = " SAT 2026-07-05 ";
 static const char* INDOOR_LINE = "IN  23.4C   47% ";
-static const char* PRESSURE_LINE = "PRES 1013.2 hPa ";
-static const char* CUSTOM_LINE = "       HI       ";
 
 static void assert_line(const UiOutput& out, const char* expect) {
     TEST_ASSERT_EQUAL_STRING(expect, out.line);
@@ -146,19 +145,6 @@ static void test_over_budget_lockstep_flips_excess_at_midpoint(void) {
     assert_line(d.out, "   2:25:36 PM   ");
 }
 
-// ---- page changes snap ----
-
-static void test_page_change_snaps_instantly(void) {
-    // Page-transition animation was tried and removed (7 CGRAM slots cannot
-    // composite a whole 16-cell line): a step lands directly on the new page.
-    FsmDriver d;
-    d.idle();
-    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
-    TEST_ASSERT_FALSE(d.out.animating);
-    assert_line(d.feed(UiInput::StepCCW), TIME_LINE);
-    TEST_ASSERT_FALSE(d.out.animating);
-}
-
 static void test_identical_pairs_share_one_slot(void) {
     FsmDriver d;
     d.snap.tm_now.tm_hour = 11;
@@ -188,8 +174,11 @@ static void test_input_mid_roll_snaps_then_processes(void) {
     d.snap.tm_now.tm_sec = 37;
     d.idle_us(40000, 3);  // TIME roll mid-flight
     TEST_ASSERT_TRUE(d.out.animating);
-    // The step snaps the roll and lands directly on the next page.
-    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
+    // The step snaps the roll and processes the page change; once the ensuing
+    // crossfade settles the display is on the next page.
+    d.feed(UiInput::StepCW);
+    d.settle();
+    assert_line(d.out, DATE_LINE);
     TEST_ASSERT_FALSE(d.out.animating);
 }
 
@@ -227,26 +216,6 @@ static void test_menu_exit_snaps_to_pages(void) {
     TEST_ASSERT_FALSE(d.out.animating);
 }
 
-static void test_msg_jump_to_custom_snaps(void) {
-    FsmDriver d;
-    assert_line(d.idle(), TIME_LINE);
-    strcpy(d.snap.msg, "HI");
-    d.snap.msg_seq++;
-    assert_line(d.idle(), CUSTOM_LINE);  // page change: no animation
-    TEST_ASSERT_FALSE(d.out.animating);
-}
-
-static void test_custom_auto_advance_snaps(void) {
-    FsmDriver d;
-    strcpy(d.snap.msg, "HI");
-    d.idle();
-    for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);
-    assert_line(d.out, CUSTOM_LINE);
-    d.snap.msg[0] = '\0';  // cleared via the API mid-display
-    assert_line(d.idle(), PRESSURE_LINE);  // page change: no animation
-    TEST_ASSERT_FALSE(d.out.animating);
-}
-
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_font_all_printable_bit7_clear);
@@ -258,13 +227,10 @@ int main(int, char**) {
     RUN_TEST(test_time_second_roll_timeline);
     RUN_TEST(test_minute_rollover_rolls_cells_in_lockstep);
     RUN_TEST(test_over_budget_lockstep_flips_excess_at_midpoint);
-    RUN_TEST(test_page_change_snaps_instantly);
     RUN_TEST(test_identical_pairs_share_one_slot);
     RUN_TEST(test_input_mid_roll_snaps_then_processes);
     RUN_TEST(test_btndown_mid_roll_cancels_before_hold_bar);
     RUN_TEST(test_portal_banner_suppresses_roll);
     RUN_TEST(test_menu_exit_snaps_to_pages);
-    RUN_TEST(test_msg_jump_to_custom_snaps);
-    RUN_TEST(test_custom_auto_advance_snaps);
     return UNITY_END();
 }
