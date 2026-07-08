@@ -12,4 +12,8 @@ void web_start_portal();
 // runs concurrently with the portal (different boot paths).
 void web_start_api();
 
+// Copy-out getter for the custom message (owned by this module, RAM-only —
+// deliberately not persisted: it is ephemeral and NVS wear is avoided).
+void web_get_message(char out[65]);
+
 #endif

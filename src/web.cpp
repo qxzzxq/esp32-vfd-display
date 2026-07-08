@@ -202,6 +202,18 @@ void web_start_portal() {
 
 static httpd_handle_t s_api = nullptr;
 
+// Custom message: RAM-only by design — ephemeral (lost on reboot, like any
+// pushed notification) and free of NVS wear. 64 chars + NUL per the API
+// contract; written by the httpd task, read by the UI task per tick.
+static char s_msg[65] = "";
+static portMUX_TYPE s_msg_lock = portMUX_INITIALIZER_UNLOCKED;
+
+void web_get_message(char out[65]) {
+    taskENTER_CRITICAL(&s_msg_lock);
+    strcpy(out, s_msg);
+    taskEXIT_CRITICAL(&s_msg_lock);
+}
+
 // JSON error response. Returns ESP_FAIL so httpd closes the connection,
 // which also discards the unread body on the 413 path.
 static esp_err_t json_error(httpd_req_t* req, const char* status, const char* msg) {
@@ -266,10 +278,10 @@ static esp_err_t msg_post_handler(httpd_req_t* req) {
         }
     }
 
-    Settings st = settings_get();
-    strlcpy(st.msg, text->valuestring, sizeof(st.msg));
+    taskENTER_CRITICAL(&s_msg_lock);
+    strlcpy(s_msg, text->valuestring, sizeof(s_msg));  // empty string clears
+    taskEXIT_CRITICAL(&s_msg_lock);
     cJSON_Delete(root);
-    settings_save(st);  // empty string clears; the CUSTOM page follows msg
     ESP_LOGI(TAG, "message set (%d chars)", (int)n);
 
     httpd_resp_set_type(req, "application/json");
@@ -278,9 +290,10 @@ static esp_err_t msg_post_handler(httpd_req_t* req) {
 }
 
 static esp_err_t msg_get_handler(httpd_req_t* req) {
-    Settings st = settings_get();
+    char msg[65];
+    web_get_message(msg);
     cJSON* root = cJSON_CreateObject();
-    if (root && !cJSON_AddStringToObject(root, "text", st.msg)) {
+    if (root && !cJSON_AddStringToObject(root, "text", msg)) {
         cJSON_Delete(root);
         root = nullptr;
     }

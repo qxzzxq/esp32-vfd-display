@@ -13,7 +13,6 @@ struct Settings {
     uint8_t cycle_s;  // auto-cycle interval in seconds, 0 = off
     char lat[12];     // weather location; empty = weather disabled
     char lon[12];
-    char msg[65];     // custom page text (POST API)
 };
 
 // Loads from NVS (defaults for missing keys) and applies the timezone.

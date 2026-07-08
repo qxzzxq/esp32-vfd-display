@@ -16,6 +16,7 @@
 #include "ui/menu_items.h"
 #include "ui/pages.h"
 #include "weather.h"
+#include "web.h"
 
 // Platform shell over the pure UI core (src/ui/): owns the display and the
 // encoder loop, builds the per-tick UiSnapshot from the producer modules,
@@ -69,7 +70,7 @@ static UiSnapshot build_snapshot() {
     s.use24h = st.use24h != 0;
     s.tz_idx = st.tz_idx;
     s.cycle_s = st.cycle_s;
-    memcpy(s.msg, st.msg, sizeof(s.msg));
+    web_get_message(s.msg);
     return s;
 }
 

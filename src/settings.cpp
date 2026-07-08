@@ -68,7 +68,6 @@ void settings_init() {
     load_u8("cycle_s", &s_settings.cycle_s);
     load_str("lat", s_settings.lat, sizeof(s_settings.lat));
     load_str("lon", s_settings.lon, sizeof(s_settings.lon));
-    load_str("msg", s_settings.msg, sizeof(s_settings.msg));
 
     if (s_settings.tz_idx >= tz_count()) s_settings.tz_idx = 0;
     apply_tz();
@@ -93,7 +92,6 @@ void settings_save(const Settings& s) {
     nvs_set_u8(s_nvs, "cycle_s", s_settings.cycle_s);
     nvs_set_str(s_nvs, "lat", s_settings.lat);
     nvs_set_str(s_nvs, "lon", s_settings.lon);
-    nvs_set_str(s_nvs, "msg", s_settings.msg);
     nvs_commit(s_nvs);
     xSemaphoreGive(s_mutex);
     apply_tz();
