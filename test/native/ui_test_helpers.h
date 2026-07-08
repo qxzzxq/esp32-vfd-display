@@ -12,8 +12,9 @@
 #include "ui/pages.h"
 
 // Snapshot with sane defaults: synced clock at SAT 2026-07-05 14:25:36,
-// sensors OK (23.4 C / 47 % / 1013.2 hPa, BMP280 present), WiFi connected,
-// brightness 128 (menu units 8), 24-hour mode. Tests tweak fields from here.
+// sensors OK (23.4 C / 47 % / 1013.2 hPa, BMP280 present), weather fresh
+// (31.2 C / 60.4 % / UV 8.65, 5 min old), WiFi connected, brightness 128
+// (menu units 8), 24-hour mode. Tests tweak fields from here.
 inline UiSnapshot make_snapshot() {
     UiSnapshot s;
     memset(&s, 0, sizeof(s));
@@ -30,6 +31,12 @@ inline UiSnapshot make_snapshot() {
     s.rh = 47.0f;
     s.hPa = 1013.2f;
     s.has_pressure = true;
+    s.has_location = true;
+    s.weather_ok = true;
+    s.out_tC = 31.2f;
+    s.out_rh = 60.4f;
+    s.out_uv = 8.65f;
+    s.weather_age_s = 300;
     s.net = UiNetState::Connected;
     strcpy(s.ap_ssid, "VFD-ABCD");
     s.bright = 128;

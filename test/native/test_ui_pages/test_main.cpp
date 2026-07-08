@@ -12,7 +12,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // Registry order, fixed by ui_pages().
-enum { PAGE_TIME, PAGE_DATE, PAGE_INDOOR, PAGE_PRESSURE, PAGE_COUNT };
+enum { PAGE_TIME, PAGE_DATE, PAGE_INDOOR, PAGE_OUTDOOR, PAGE_PRESSURE, PAGE_COUNT };
 
 static const UiPage* page(int idx) {
     uint8_t n = 0;
@@ -29,7 +29,7 @@ static void assert_render(int idx, const UiSnapshot& s, const char* expect) {
     TEST_ASSERT_EQUAL_STRING(expect, line);
 }
 
-static void test_registry_has_four_pages(void) {
+static void test_registry_has_five_pages(void) {
     uint8_t n = 0;
     ui_pages(&n);
     TEST_ASSERT_EQUAL_INT(PAGE_COUNT, n);
@@ -88,6 +88,52 @@ static void test_indoor_sensor_err(void) {
     assert_render(PAGE_INDOOR, s, "IN  SENSOR ERR  ");
 }
 
+// OUTDOOR golden strings match the docs/DESIGN.md UI table; values are
+// rounded to integers (%.0f) and the line is left-padded to 16.
+static void test_outdoor(void) {
+    UiSnapshot s = make_snapshot();
+    assert_render(PAGE_OUTDOOR, s, "OUT 31C 60% UV9 ");
+}
+
+static void test_outdoor_negative_temp_rounds(void) {
+    UiSnapshot s = make_snapshot();
+    s.out_tC = -5.4f;
+    s.out_rh = 80.4f;
+    s.out_uv = 0.2f;
+    assert_render(PAGE_OUTDOOR, s, "OUT -5C 80% UV0 ");
+}
+
+static void test_outdoor_widest_values_fill_line(void) {
+    // -10C + 100% + UV11 is the widest realistic combination: exactly 16.
+    UiSnapshot s = make_snapshot();
+    s.out_tC = -10.2f;
+    s.out_rh = 99.6f;
+    s.out_uv = 10.7f;
+    assert_render(PAGE_OUTDOOR, s, "OUT-10C100% UV11");
+}
+
+static void test_outdoor_stale_after_45_min(void) {
+    UiSnapshot s = make_snapshot();
+    s.weather_age_s = 45 * 60;  // exactly 45 min: still fresh
+    assert_render(PAGE_OUTDOOR, s, "OUT 31C 60% UV9 ");
+    s.weather_age_s = 45 * 60 + 1;
+    assert_render(PAGE_OUTDOOR, s, "OUT 31C 60% UV9?");
+}
+
+static void test_outdoor_no_data(void) {
+    UiSnapshot s = make_snapshot();
+    s.weather_ok = false;
+    assert_render(PAGE_OUTDOOR, s, "OUT NO DATA     ");
+}
+
+static void test_outdoor_no_location(void) {
+    // Location unset wins over "no data": the user's fix is configuration.
+    UiSnapshot s = make_snapshot();
+    s.has_location = false;
+    s.weather_ok = false;
+    assert_render(PAGE_OUTDOOR, s, "SET LOCATION    ");
+}
+
 static void test_pressure(void) {
     UiSnapshot s = make_snapshot();
     assert_render(PAGE_PRESSURE, s, "PRES 1013.2 hPa ");
@@ -104,15 +150,18 @@ static void test_pressure_availability_follows_probe(void) {
     TEST_ASSERT_TRUE(page(PAGE_PRESSURE)->available(s));
     s.has_pressure = false;
     TEST_ASSERT_FALSE(page(PAGE_PRESSURE)->available(s));
-    // Every other page ignores it.
+    // Every other page ignores it. OUTDOOR stays in rotation even without
+    // a location — SET LOCATION is the configuration hint.
     TEST_ASSERT_TRUE(page(PAGE_TIME)->available(s));
     TEST_ASSERT_TRUE(page(PAGE_DATE)->available(s));
     TEST_ASSERT_TRUE(page(PAGE_INDOOR)->available(s));
+    s.has_location = false;
+    TEST_ASSERT_TRUE(page(PAGE_OUTDOOR)->available(s));
 }
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_registry_has_four_pages);
+    RUN_TEST(test_registry_has_five_pages);
     RUN_TEST(test_time_24h);
     RUN_TEST(test_time_12h_afternoon);
     RUN_TEST(test_time_12h_midnight);
@@ -122,6 +171,12 @@ int main(int, char**) {
     RUN_TEST(test_date_not_synced);
     RUN_TEST(test_indoor);
     RUN_TEST(test_indoor_sensor_err);
+    RUN_TEST(test_outdoor);
+    RUN_TEST(test_outdoor_negative_temp_rounds);
+    RUN_TEST(test_outdoor_widest_values_fill_line);
+    RUN_TEST(test_outdoor_stale_after_45_min);
+    RUN_TEST(test_outdoor_no_data);
+    RUN_TEST(test_outdoor_no_location);
     RUN_TEST(test_pressure);
     RUN_TEST(test_pressure_nan);
     RUN_TEST(test_pressure_availability_follows_probe);

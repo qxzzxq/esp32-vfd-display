@@ -15,6 +15,7 @@
 #include "ui/fsm.h"
 #include "ui/menu_items.h"
 #include "ui/pages.h"
+#include "weather.h"
 
 // Platform shell over the pure UI core (src/ui/): owns the display and the
 // encoder loop, builds the per-tick UiSnapshot from the producer modules,
@@ -45,6 +46,15 @@ static UiSnapshot build_snapshot() {
     s.sensors_ok = sensors_get(&s.tC, &s.rh, &s.hPa);
     s.has_pressure = sensors_has_pressure();
 
+    Weather w;
+    s.weather_ok = weather_get(&w);
+    if (s.weather_ok) {
+        s.out_tC = w.tC;
+        s.out_rh = w.rh;
+        s.out_uv = w.uv;
+        s.weather_age_s = (uint32_t)((esp_timer_get_time() - w.fetched_us) / 1000000);
+    }
+
     switch (net_state()) {
         case NetState::Portal: s.net = UiNetState::Portal; break;
         case NetState::Connecting: s.net = UiNetState::Connecting; break;
@@ -54,6 +64,7 @@ static UiSnapshot build_snapshot() {
     net_get_ip(s.ip);
 
     Settings st = settings_get();
+    s.has_location = st.lat[0] != '\0' && st.lon[0] != '\0';
     s.bright = st.bright;
     s.use24h = st.use24h != 0;
     s.tz_idx = st.tz_idx;
