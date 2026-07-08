@@ -100,12 +100,15 @@ constexpr int UI_HOLD_BAR_SEGS = 5;
 
 // Vertical roll animation (split-flap) for opted-in content changes (TIME
 // ticks): a cell travels its 7 rows plus one blank gap row, one row per
-// 40 ms step = 320 ms per roll, all changed cells in lockstep. Cells rolling
-// the same chars share a CGRAM slot (see UiFsm::apply_roll). Page changes
-// deliberately snap — 16 cells need more simultaneous composites than the
-// 8-glyph CGRAM can hold, and a partially-animated line looks broken.
-constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel
-constexpr int64_t UI_ROLL_STEP_US = 40 * 1000LL;
+// 30 ms step = 240 ms per roll, all changed cells in lockstep. Cells rolling
+// the same chars share a CGRAM slot (see UiFsm::apply_transition). Page changes
+// crossfade instead of rolling (UI_FADE_HALF_US) — 16 cells need more
+// simultaneous composites than the 8-glyph CGRAM can hold.
+constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel (geometry, not timing)
+// Per-step time; UI_ROLL_STEPS * this = total roll. Kept equal to the shell's animation
+// tick (src/ui.cpp UI_TICK_ANIM_MS) so exactly one step renders per frame, and a multiple
+// of the 10 ms FreeRTOS tick so frames land evenly.
+constexpr int64_t UI_ROLL_STEP_US = 30 * 1000LL;
 
 // Dimming crossfade for page transitions, one half-period per phase. The
 // outgoing page dims saved-level -> 0 (Out), the DCRAM content swaps at black,

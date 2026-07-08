@@ -3,7 +3,7 @@
 // — TIME ticks — roll their changed cells in lockstep with slot sharing;
 // input snaps a roll; overlays suppress it). Page changes crossfade instead of
 // rolling — that envelope is pinned in test_ui_fade. Timelines advance in the
-// shell's 40 ms animation frames via FsmDriver::idle_us/settle.
+// shell's 30 ms animation frames via FsmDriver::idle_us/settle.
 #include <string.h>
 #include <unity.h>
 
@@ -95,18 +95,18 @@ static void test_time_second_roll_timeline(void) {
     assert_line(d.idle(), TIME_LINE);  // boot frame snaps
     d.snap.tm_now.tm_sec = 37;
     // Trigger frame: roll starts at k=0, still showing the old content.
-    assert_line(d.idle_us(40000), TIME_LINE);
+    assert_line(d.idle_us(30000), TIME_LINE);
     TEST_ASSERT_TRUE(d.out.animating);
     // Interior frames: the seconds cell shows CGRAM slot 1 with the
     // '6'->'7' composite for the current step.
     uint8_t expect[5];
     for (int k = 1; k < UI_ROLL_STEPS; k++) {
-        assert_line(d.idle_us(40000), "    14:25:3\x01    ");
+        assert_line(d.idle_us(30000), "    14:25:3\x01    ");
         ui_roll_composite(k <= 6 ? '6' : ' ', k >= 2 ? '7' : ' ', k, expect);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
     }
     // Final frame: pure ASCII again, defaults restored, animation over.
-    assert_line(d.idle_us(40000), "    14:25:37    ");
+    assert_line(d.idle_us(30000), "    14:25:37    ");
     TEST_ASSERT_FALSE(d.out.animating);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(UI_GLYPHS[0].cols, d.out.glyphs[1], 5);
 }
@@ -117,12 +117,12 @@ static void test_minute_rollover_rolls_cells_in_lockstep(void) {
     d.idle();  // boot frame: 14:25:59
     d.snap.tm_now.tm_min = 26;
     d.snap.tm_now.tm_sec = 0;
-    d.idle_us(40000);  // trigger frame (old content)
+    d.idle_us(30000);  // trigger frame (old content)
     // Three changed cells (min units, sec tens, sec units) roll together.
     // At k = 1 the incoming glyphs are not yet visible, so the two cells
     // exiting a '5' share one slot; from k = 2 the keys are full pairs.
-    assert_line(d.idle_us(40000), "    14:2\x01:\x01\x02    ");
-    assert_line(d.idle_us(40000), "    14:2\x01:\x02\x03    ");
+    assert_line(d.idle_us(30000), "    14:2\x01:\x01\x02    ");
+    assert_line(d.idle_us(30000), "    14:2\x01:\x02\x03    ");
     d.settle();
     assert_line(d.out, "    14:26:00    ");
 }
@@ -136,10 +136,10 @@ static void test_over_budget_lockstep_flips_excess_at_midpoint(void) {
     FsmDriver d;
     assert_line(d.idle(), TIME_LINE);
     d.snap.use24h = false;
-    d.idle_us(40000);  // trigger
-    assert_line(d.idle_us(40000), "    \x01\x02\x03\x04\x05\x03\x06\x07    ");
-    assert_line(d.idle_us(40000), "   \x01\x02\x03\x04\x05\x06\x07" "36    ");
-    d.idle_us(40000, 2);  // k = 4
+    d.idle_us(30000);  // trigger
+    assert_line(d.idle_us(30000), "    \x01\x02\x03\x04\x05\x03\x06\x07    ");
+    assert_line(d.idle_us(30000), "   \x01\x02\x03\x04\x05\x06\x07" "36    ");
+    d.idle_us(30000, 2);  // k = 4
     assert_line(d.out, "   \x01\x02\x03\x04\x05\x06\x07 PM   ");
     d.settle();
     assert_line(d.out, "   2:25:36 PM   ");
@@ -154,9 +154,9 @@ static void test_identical_pairs_share_one_slot(void) {
     d.snap.tm_now.tm_hour = 22;
     d.snap.tm_now.tm_min = 22;
     d.snap.tm_now.tm_sec = 22;
-    d.idle_us(40000);  // trigger
+    d.idle_us(30000);  // trigger
     // All six changing digits are the same '1'->'2' pair -> one shared slot.
-    assert_line(d.idle_us(40000), "    \x01\x01:\x01\x01:\x01\x01    ");
+    assert_line(d.idle_us(30000), "    \x01\x01:\x01\x01:\x01\x01    ");
     uint8_t expect[5];
     ui_roll_composite('1', ' ', 1, expect);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
@@ -172,7 +172,7 @@ static void test_input_mid_roll_snaps_then_processes(void) {
     FsmDriver d;
     d.idle();
     d.snap.tm_now.tm_sec = 37;
-    d.idle_us(40000, 3);  // TIME roll mid-flight
+    d.idle_us(30000, 3);  // TIME roll mid-flight
     TEST_ASSERT_TRUE(d.out.animating);
     // The step snaps the roll and processes the page change; once the ensuing
     // crossfade settles the display is on the next page.
@@ -186,7 +186,7 @@ static void test_btndown_mid_roll_cancels_before_hold_bar(void) {
     FsmDriver d;
     d.idle();
     d.snap.tm_now.tm_sec = 37;
-    d.idle_us(40000, 3);  // TIME roll mid-flight
+    d.idle_us(30000, 3);  // TIME roll mid-flight
     assert_line(d.feed(UiInput::BtnDown), "    14:25:37    ");  // snapped
     TEST_ASSERT_FALSE(d.out.animating);
     assert_line(d.idle(5), "MENU     [     ]");  // bar at 500 ms

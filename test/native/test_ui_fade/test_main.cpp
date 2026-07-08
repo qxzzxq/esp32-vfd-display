@@ -3,8 +3,8 @@
 // incoming page back in over another UI_FADE_HALF_US (In), restoring the saved
 // brightness. Out always completes; a page change mid-Out only retargets, while
 // one mid-In restarts In from black for the new page. Driven by SetBrightness
-// effects; yields to overlays (hold bar / portal / menu). Timelines advance in
-// the shell's 40 ms animation frames via FsmDriver::idle_us/settle.
+// effects; yields to overlays (hold bar / portal / menu). The time-based fade
+// envelope is sampled here in 40 ms steps via FsmDriver::idle_us/settle.
 #include <string.h>
 #include <unity.h>
 

@@ -44,7 +44,7 @@ host-tested core in `src/ui/`: UiFsm + pages + menu items), plus the existing `V
 driver (extended only with `setCustomChar` for CGRAM glyphs — see `src/ui/glyphs.h`).
 
 Concurrency: UI task (= app_main) blocks on the encoder queue with a 100 ms render tick
-(40 ms while an animation runs) and is the **only** task that touches the VFD; a worker
+(30 ms while an animation runs) and is the **only** task that touches the VFD; a worker
 task in `net.cpp` polls sensors (10 s)
 and weather (15 min). Every screen is 16 uppercase ASCII chars.
 

@@ -71,7 +71,7 @@ own their data and expose copy-out getters — no global state struct, no cross-
 
 ## Task / concurrency model
 
-- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms — 40 ms while a roll
+- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms — 30 ms while a roll
   or the hold bar animates)`; event → input handling, timeout → re-render (clock seconds,
   edit-mode blink, marquee, auto-cycle). Only this task touches the VFD.
 - **Worker task** (in `net.cpp`, prio 3, 8 KB stack — the in-task TLS handshake of
@@ -113,8 +113,8 @@ blocks.
 **Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll and fade state in `UiFsm`).
 Two kinds: a vertical split-flap **roll** for same-page content changes, and a dimming
 **crossfade** for page changes. The roll travels a cell's old glyph out through the top
-while the new one enters from below (one blank gap row between them), 8 steps × 40 ms ≈
-320 ms, all changed cells in lockstep, composited into CGRAM from an embedded 5×7 font
+while the new one enters from below (one blank gap row between them), 8 steps × 30 ms =
+240 ms, all changed cells in lockstep, composited into CGRAM from an embedded 5×7 font
 (full printable ASCII; shapes match the CGROM so the hand-off at the roll's end is
 seamless — patch `font5x7.cpp` by eye if a glyph pops).
 
@@ -135,7 +135,7 @@ seamless — patch `font5x7.cpp` by eye if a glyph pops).
   page to black over 300 ms via the driver's dimming register (`setBrightness`, 240-level
   duty; 0 = 0/255 duty = fully dark), swaps the line at black, then dims the incoming page
   back to the saved brightness over another 300 ms. Driven by `SetBrightness` effects at
-  the 40 ms tick and using **no CGRAM**, so unlike the roll it animates a whole 16-cell
+  the 30 ms tick and using **no CGRAM**, so unlike the roll it animates a whole 16-cell
   page. Applies to manual steps, the CUSTOM message jump, and unavailable-page auto-advance
   alike. Two protected phases (`FadeState`): the dim-**out** always runs to completion — a
   page change during it only *retargets* which page dims in, never restarting it — while

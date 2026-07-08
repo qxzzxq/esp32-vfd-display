@@ -84,7 +84,7 @@ struct FsmDriver {
     }
 
     // Advance through n idle ticks of an arbitrary step (animation frames run
-    // at the shell's 40 ms cadence; 40 ms divides UI_ROLL_STEP_US exactly).
+    // at the shell's 30 ms cadence; 30 ms == UI_ROLL_STEP_US, one step/frame).
     const UiOutput& idle_us(int64_t step_us, int n = 1) {
         for (int i = 0; i < n; i++) {
             now_us += step_us;
@@ -94,9 +94,9 @@ struct FsmDriver {
     }
 
     // Fine-step until the current animation finishes (bounded; a full roll
-    // is 9 frames at 40 ms, a full crossfade 15).
+    // is 9 frames at 30 ms, a full crossfade 20).
     const UiOutput& settle(int max_ticks = 64) {
-        for (int i = 0; i < max_ticks && out.animating; i++) idle_us(40000);
+        for (int i = 0; i < max_ticks && out.animating; i++) idle_us(30000);
         return out;
     }
 

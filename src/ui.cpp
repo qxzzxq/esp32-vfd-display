@@ -29,7 +29,7 @@
 #define VFD_DIN GPIO_NUM_21
 
 #define UI_TICK_MS 100      // render tick while idle
-#define UI_TICK_ANIM_MS 40  // render tick while a roll / hold bar animates
+#define UI_TICK_ANIM_MS 30  // render tick while animating; = UI_ROLL_STEP_US (one step/frame)
 
 // System time is bogus (starts at 1970) until SNTP sets it (M4).
 #define MIN_VALID_EPOCH 1609459200  // 2021-01-01
