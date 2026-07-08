@@ -12,7 +12,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // Registry order, fixed by ui_pages().
-enum { PAGE_TIME, PAGE_DATE, PAGE_INDOOR, PAGE_OUTDOOR, PAGE_PRESSURE, PAGE_COUNT };
+enum { PAGE_TIME, PAGE_DATE, PAGE_INDOOR, PAGE_OUTDOOR, PAGE_CUSTOM, PAGE_PRESSURE, PAGE_COUNT };
 
 static const UiPage* page(int idx) {
     uint8_t n = 0;
@@ -21,15 +21,19 @@ static const UiPage* page(int idx) {
     return pages[idx];
 }
 
-static void assert_render(int idx, const UiSnapshot& s, const char* expect) {
+static void assert_render_at(int idx, const UiSnapshot& s, int64_t now_us, const char* expect) {
     char line[17];
     memset(line, '#', sizeof(line));  // catch missing NUL / short writes
-    page(idx)->render(line, s, 0);
+    page(idx)->render(line, s, now_us);
     TEST_ASSERT_EQUAL_INT(16, (int)strlen(line));
     TEST_ASSERT_EQUAL_STRING(expect, line);
 }
 
-static void test_registry_has_five_pages(void) {
+static void assert_render(int idx, const UiSnapshot& s, const char* expect) {
+    assert_render_at(idx, s, 0, expect);
+}
+
+static void test_registry_has_six_pages(void) {
     uint8_t n = 0;
     ui_pages(&n);
     TEST_ASSERT_EQUAL_INT(PAGE_COUNT, n);
@@ -134,6 +138,67 @@ static void test_outdoor_no_location(void) {
     assert_render(PAGE_OUTDOOR, s, "SET LOCATION    ");
 }
 
+// CUSTOM golden strings: text <=16 renders centered (left-biased); longer
+// text marquees — the 16-char window slides over the text plus a 3-space
+// wrap gap at 1 char / 300 ms, phase taken from now_us (stateless).
+static void test_custom_availability_follows_msg(void) {
+    UiSnapshot s = make_snapshot();  // msg is zeroed by default
+    TEST_ASSERT_FALSE(page(PAGE_CUSTOM)->available(s));
+    strcpy(s.msg, "HI");
+    TEST_ASSERT_TRUE(page(PAGE_CUSTOM)->available(s));
+    // No other page keys off msg.
+    s.msg[0] = '\0';
+    TEST_ASSERT_TRUE(page(PAGE_TIME)->available(s));
+    TEST_ASSERT_TRUE(page(PAGE_DATE)->available(s));
+    TEST_ASSERT_TRUE(page(PAGE_INDOOR)->available(s));
+    TEST_ASSERT_TRUE(page(PAGE_OUTDOOR)->available(s));
+    TEST_ASSERT_TRUE(page(PAGE_PRESSURE)->available(s));
+}
+
+static void test_custom_short_text_centered(void) {
+    UiSnapshot s = make_snapshot();
+    strcpy(s.msg, "HELLO");  // odd remainder: extra space goes right
+    assert_render(PAGE_CUSTOM, s, "     HELLO      ");
+    strcpy(s.msg, "HI");
+    assert_render(PAGE_CUSTOM, s, "       HI       ");
+}
+
+static void test_custom_exactly_16_never_scrolls(void) {
+    UiSnapshot s = make_snapshot();
+    strcpy(s.msg, "ABCDEFGHIJKLMNOP");
+    assert_render_at(PAGE_CUSTOM, s, 0, "ABCDEFGHIJKLMNOP");
+    assert_render_at(PAGE_CUSTOM, s, 1500000, "ABCDEFGHIJKLMNOP");
+}
+
+static void test_custom_marquee_steps_and_wraps(void) {
+    UiSnapshot s = make_snapshot();
+    strcpy(s.msg, "THE QUICK BROWN FOX");  // len 19, period 19+3 = 22
+    assert_render_at(PAGE_CUSTOM, s, 0, "THE QUICK BROWN ");
+    assert_render_at(PAGE_CUSTOM, s, 299999, "THE QUICK BROWN ");   // still frame 0
+    assert_render_at(PAGE_CUSTOM, s, 300000, "HE QUICK BROWN F");   // 1 char / 300 ms
+    assert_render_at(PAGE_CUSTOM, s, 1200000, "QUICK BROWN FOX ");  // gap enters
+    assert_render_at(PAGE_CUSTOM, s, 2100000, "CK BROWN FOX   T");  // wrap through gap
+    assert_render_at(PAGE_CUSTOM, s, 6600000, "THE QUICK BROWN ");  // full period
+}
+
+static void test_custom_marquee_len_17(void) {
+    // Shortest text that scrolls: only 12 text chars left at offset 5.
+    UiSnapshot s = make_snapshot();
+    strcpy(s.msg, "ABCDEFGHIJKLMNOPQ");  // len 17, period 20
+    assert_render_at(PAGE_CUSTOM, s, 0, "ABCDEFGHIJKLMNOP");
+    assert_render_at(PAGE_CUSTOM, s, 300000, "BCDEFGHIJKLMNOPQ");
+    assert_render_at(PAGE_CUSTOM, s, 600000, "CDEFGHIJKLMNOPQ ");
+    assert_render_at(PAGE_CUSTOM, s, 1500000, "FGHIJKLMNOPQ   A");
+}
+
+static void test_custom_marquee_len_64(void) {
+    // Max length guards the strlen-based modulo math.
+    UiSnapshot s = make_snapshot();
+    for (int i = 0; i < 64; i++) s.msg[i] = (char)('0' + i % 10);
+    s.msg[64] = '\0';  // period 67
+    assert_render_at(PAGE_CUSTOM, s, 18000000, "0123   012345678");  // off 60
+}
+
 static void test_pressure(void) {
     UiSnapshot s = make_snapshot();
     assert_render(PAGE_PRESSURE, s, "PRES 1013.2 hPa ");
@@ -161,7 +226,7 @@ static void test_pressure_availability_follows_probe(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_registry_has_five_pages);
+    RUN_TEST(test_registry_has_six_pages);
     RUN_TEST(test_time_24h);
     RUN_TEST(test_time_12h_afternoon);
     RUN_TEST(test_time_12h_midnight);
@@ -177,6 +242,12 @@ int main(int, char**) {
     RUN_TEST(test_outdoor_stale_after_45_min);
     RUN_TEST(test_outdoor_no_data);
     RUN_TEST(test_outdoor_no_location);
+    RUN_TEST(test_custom_availability_follows_msg);
+    RUN_TEST(test_custom_short_text_centered);
+    RUN_TEST(test_custom_exactly_16_never_scrolls);
+    RUN_TEST(test_custom_marquee_steps_and_wraps);
+    RUN_TEST(test_custom_marquee_len_17);
+    RUN_TEST(test_custom_marquee_len_64);
     RUN_TEST(test_pressure);
     RUN_TEST(test_pressure_nan);
     RUN_TEST(test_pressure_availability_follows_probe);
