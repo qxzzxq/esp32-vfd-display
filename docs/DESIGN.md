@@ -95,7 +95,7 @@ pauses auto-cycle for 30 s):
 | 2 | DATE     | ` SAT 2026-07-05 `   | ` NO TIME SYNC   ` |
 | 3 | INDOOR   | `IN  23.4C   47% `   | `IN  SENSOR ERR  ` |
 | 4 | OUTDOOR  | `OUT 31C 60% UV9 `   | `OUT NO DATA` / `SET LOCATION` if lat/lon empty; `?` suffix if >45 min old |
-| 5 | CUSTOM   | POST'd text; >16 ch → marquee, 1 char / 300 ms | skipped in rotation when empty |
+| 5 | CUSTOM   | POST'd text; ≤16 ch centered; >16 ch → marquee, 1 char / 300 ms, wraps through a 3-space gap | skipped in rotation when empty; auto-advances if cleared while shown |
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
@@ -237,9 +237,15 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   appears. Not yet exercised: recovery on reconnect (expect fresh values and the
   `?` gone within ~15 min of the router returning); values not formally
   cross-checked against open-meteo.com.
-- **M6 — HTTP API + custom page**: *Verify:* `curl -X POST http://<ip>/api/message -d
-  '{"text":"HELLO"}'` shows page; 65-char text → 400; long text marquees; survives
-  reboot; `GET /api/status` sane.
+- **M6 — HTTP API + custom page** ✅ (2026-07-07): `/api/message` (POST/GET) +
+  `/api/status` + CUSTOM page with centered/marquee rendering.
+  *Verified on hardware (curl against the live device):* POST shows the page and
+  round-trips through GET; 64-char text accepted, 65 → 400; missing/non-string
+  text, bad JSON, and ``-smuggled control chars → 400; >256 B body → 413;
+  `"`/`\` escaping round-trips; `/api/status` sane (synced local time, plausible
+  indoor/weather, negative RSSI); heap stable across 60 requests. Not yet
+  exercised by eye: marquee cadence/wrap gap on the VFD, power-cycle persistence,
+  auto-advance when the shown message is cleared.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields. *Verify:* overnight soak — no reboots, clock correct, heap stable
   (via /api/status).
