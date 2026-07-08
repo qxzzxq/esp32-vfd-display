@@ -6,14 +6,18 @@
 #include "fsm.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "glyphs.h"
 #include "pages.h"
+#include "roll.h"
 
 void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out) {
     out->line[0] = '\0';
     out->hold_fired = false;
+    out->animating = false;
     out->effect_count = 0;
+    default_glyphs(out);
 
     // Mutable per-tick view: a committing item writes its new value here so
     // the render below shows it immediately, one tick before the shell's
@@ -21,6 +25,9 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
     UiSnapshot view = s;
 
     if (in != UiInput::None) {
+        // Any input snaps an in-flight roll to its target before dispatch,
+        // so what the user acts on is what the display settles to.
+        roll_.active = false;
         last_input_us_ = now_us;
         switch (in) {
             case UiInput::StepCW: handle_step(1, view, *out); break;
@@ -61,6 +68,19 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
     }
 
     render(out->line, now_us, view);
+
+    // Roll only un-overlaid Pages-mode content; any other frame (menu, hold
+    // bar, portal banner) invalidates the roll-from state so the first pages
+    // frame afterwards snaps instead of animating from stale content.
+    bool hold_visible =
+        press_start_us_ >= 0 && now_us - press_start_us_ >= UI_HOLD_SHOW_US;
+    if (mode_ == Mode::Pages && !hold_visible && view.net != UiNetState::Portal) {
+        apply_roll(out->line, now_us, out);
+    } else {
+        roll_.active = false;
+        prev_page_ = 0xFF;
+    }
+    out->animating = roll_.active || hold_visible;
 
     // Long-press fires while still held: from the pages it opens the menu,
     // from the menu it escapes. render() has just drawn the completed bar
@@ -106,6 +126,7 @@ void UiFsm::handle_step(int dir, const UiSnapshot& s, UiOutput& out) {
             do {
                 page_ = (uint8_t)((page_ + dir + page_count_) % page_count_);
             } while (!pages_[page_]->available(s));
+            dir_hint_ = dir;  // the roll drum follows the knob direction
             break;
         case Mode::Menu:
             item_ = (uint8_t)((item_ + dir + item_count_) % item_count_);
@@ -160,4 +181,64 @@ void UiFsm::render_portal_banner(char line[17], int64_t now_us, const UiSnapshot
         snprintf(line, 17, "SETUP  %-9s", s.ap_ssid);
     else
         snprintf(line, 17, "AP 192.168.4.1  ");
+}
+
+void UiFsm::default_glyphs(UiOutput* out) {
+    memset(out->glyphs, 0, sizeof(out->glyphs));
+    for (int i = 0; i < UI_GLYPH_COUNT; i++)
+        memcpy(out->glyphs[UI_GLYPHS[i].slot], UI_GLYPHS[i].cols, 5);
+}
+
+void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
+    // Trigger detection against the previous pages frame. A page change
+    // (rotation, msg-jump, availability auto-advance, future auto-cycle)
+    // starts a staggered wave; an opted-in same-page content change (TIME
+    // second tick) rolls its changed cells in lockstep.
+    if (prev_page_ != 0xFF) {
+        if (page_ != prev_page_) {
+            roll_.active = true;
+            roll_.wave = true;
+            roll_.upward = dir_hint_ >= 0;
+            roll_.start_us = now_us;
+            memcpy(roll_.from, prev_content_, 17);
+        } else if (!roll_.active && pages_[page_]->rolls_on_change() &&
+                   strcmp(line, prev_content_) != 0) {
+            roll_.active = true;
+            roll_.wave = false;
+            roll_.upward = true;
+            roll_.start_us = now_us;
+            memcpy(roll_.from, prev_content_, 17);
+        }
+    }
+    dir_hint_ = 1;
+    prev_page_ = page_;
+    memcpy(prev_content_, line, 17);  // always the logical target
+    if (!roll_.active) return;
+
+    // Composite the in-flight cells over the target. Slots are reallocated
+    // left->right every frame (stateless; the shell diff-uploads changes).
+    // If more cells are mid-roll than slots — only reachable by lockstep
+    // rolls with > 7 diffs, e.g. a 24H format flip — the excess snaps.
+    int64_t elapsed = now_us - roll_.start_us;
+    bool done = true;
+    int ordinal = 0;   // index among changed cells: fixes the wave schedule
+    int next_slot = 1;
+    for (int i = 0; i < 16; i++) {
+        if (roll_.from[i] == line[i]) continue;
+        int64_t cell_elapsed =
+            elapsed - (roll_.wave ? ordinal * UI_WAVE_STAGGER_US : 0);
+        ordinal++;
+        int k = cell_elapsed <= 0 ? 0 : (int)(cell_elapsed / UI_ROLL_STEP_US);
+        if (k >= UI_ROLL_STEPS) continue;  // this cell already shows the target
+        done = false;
+        if (k == 0) {
+            line[i] = roll_.from[i];  // scheduled but not moving yet
+        } else if (next_slot <= 7) {
+            ui_roll_composite(roll_.from[i], line[i], k, roll_.upward,
+                              out->glyphs[next_slot]);
+            line[i] = (char)next_slot++;
+        }
+        // else: over budget — leave the target char (snap)
+    }
+    if (done) roll_.active = false;
 }

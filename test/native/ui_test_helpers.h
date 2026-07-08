@@ -83,6 +83,23 @@ struct FsmDriver {
         return out;
     }
 
+    // Advance through n idle ticks of an arbitrary step (animation frames run
+    // at the shell's 40 ms cadence; 40 ms divides UI_ROLL_STEP_US exactly).
+    const UiOutput& idle_us(int64_t step_us, int n = 1) {
+        for (int i = 0; i < n; i++) {
+            now_us += step_us;
+            fsm.tick(UiInput::None, now_us, snap, &out);
+        }
+        return out;
+    }
+
+    // Fine-step until the current animation finishes (bounded; a full 16-cell
+    // wave needs ~27 frames at 40 ms).
+    const UiOutput& settle(int max_ticks = 64) {
+        for (int i = 0; i < max_ticks && out.animating; i++) idle_us(40000);
+        return out;
+    }
+
     // Short click: press, then release one tick (100 ms) later.
     const UiOutput& click() {
         feed(UiInput::BtnDown);

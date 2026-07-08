@@ -69,6 +69,16 @@ struct UiOutput {
     // the shell pauses ~200 ms after drawing so the full bar registers before
     // the new mode renders. Pacing only — no device state involved.
     bool hold_fired;
+    // An animation (roll or visible hold bar) is in flight: the shell
+    // shortens its render tick from 100 ms to 40 ms while set.
+    bool animating;
+    // Desired CGRAM contents for slots 1..7, fully specified every tick
+    // ([0] is unused — code 0x00 can't appear in the NUL-terminated line).
+    // Idle ticks carry the static bar/arrow glyphs; an active roll overwrites
+    // slots with per-frame composites. The shell diffs against its cache and
+    // uploads only changes, which also restores the static glyphs after a
+    // roll borrowed their slots.
+    uint8_t glyphs[8][5];
     uint8_t effect_count;
     UiEffect effects[4];  // fixed capacity; the worst real tick emits one
 
@@ -87,5 +97,13 @@ constexpr int64_t UI_LONG_PRESS_US = 1000 * 1000LL;
 // render ticks reveal the partial-cell CGRAM glyphs in between.
 constexpr int64_t UI_HOLD_SHOW_US = 500 * 1000LL;
 constexpr int UI_HOLD_BAR_SEGS = 5;
+
+// Vertical roll animation (split-flap): a cell travels its 7 rows plus one
+// blank gap row, one row per step. 40 ms/step = 320 ms per cell; wave rolls
+// (page changes) stagger each changed cell's start by 50 ms, which caps
+// concurrent mid-roll cells at ceil(7*40/50) = 6 — within the 7 CGRAM slots.
+constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel
+constexpr int64_t UI_ROLL_STEP_US = 40 * 1000LL;
+constexpr int64_t UI_WAVE_STAGGER_US = 50 * 1000LL;
 
 #endif
