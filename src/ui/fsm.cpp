@@ -39,6 +39,15 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
         abort_to_pages(view, *out);
     }
 
+    // A page can lose availability while displayed (CUSTOM cleared via
+    // POST /api/message). Advance past it before rendering; page 0 (TIME)
+    // is always available, so the loop terminates.
+    if (mode_ == Mode::Pages && !pages_[page_]->available(view)) {
+        do {
+            page_ = (uint8_t)((page_ + 1) % page_count_);
+        } while (!pages_[page_]->available(view));
+    }
+
     render(out->line, now_us, view);
 
     // Long-press fires while still held: from the pages it opens the menu,
