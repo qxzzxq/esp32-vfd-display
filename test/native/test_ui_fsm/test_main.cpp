@@ -16,6 +16,7 @@ static const char* DATE_LINE = " SAT 2026-07-05 ";
 static const char* INDOOR_LINE = "IN  23.4C   47% ";
 static const char* OUTDOOR_LINE = "OUT 31C 60% UV9 ";
 static const char* PRESSURE_LINE = "PRES 1013.2 hPa ";
+static const char* CUSTOM_LINE = "       HI       ";  // msg "HI", centered
 static const char* MENU_BRIGHT = ">BRIGHT        8";
 static const char* EDIT_BRIGHT_8 = " BRIGHT       >8";
 static const char* MENU_WIFI = ">WIFI RESET     ";
@@ -47,6 +48,8 @@ static void test_boot_renders_first_page(void) {
     assert_no_effects(d.out);
 }
 
+// make_snapshot() leaves msg empty, so this also pins skip-empty-CUSTOM
+// (OUTDOOR steps straight to PRESSURE in both directions).
 static void test_step_cycles_pages_and_wraps(void) {
     FsmDriver d;
     assert_line(d.feed(UiInput::StepCW), DATE_LINE);
@@ -57,6 +60,7 @@ static void test_step_cycles_pages_and_wraps(void) {
     assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);  // wraps backward
 }
 
+// Empty msg here too: CUSTOM and PRESSURE are skipped back to back.
 static void test_step_skips_pressure_without_bmp280(void) {
     FsmDriver d;
     d.snap.has_pressure = false;
@@ -65,6 +69,80 @@ static void test_step_skips_pressure_without_bmp280(void) {
     d.feed(UiInput::StepCW);  // OUTDOOR
     assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // skips PRESSURE
     assert_line(d.feed(UiInput::StepCCW), OUTDOOR_LINE);  // skips backward too
+}
+
+static void test_step_cycles_six_pages_with_message(void) {
+    FsmDriver d;
+    strcpy(d.snap.msg, "HI");
+    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
+    assert_line(d.feed(UiInput::StepCW), INDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), OUTDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), CUSTOM_LINE);  // #5, after OUTDOOR
+    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);
+    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // wraps forward
+    assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);
+    assert_line(d.feed(UiInput::StepCCW), CUSTOM_LINE);  // backward too
+}
+
+// A page can lose availability while it is on screen (CUSTOM cleared via
+// POST /api/message): the next render tick must advance off it instead of
+// showing a stale/blank page.
+static void test_custom_cleared_mid_display_auto_advances(void) {
+    FsmDriver d;
+    strcpy(d.snap.msg, "HI");
+    for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);  // land on CUSTOM
+    assert_line(d.out, CUSTOM_LINE);
+    d.snap.msg[0] = '\0';  // cleared via the API mid-display
+    assert_line(d.idle(), PRESSURE_LINE);
+    assert_no_effects(d.out);
+}
+
+static void test_auto_advance_skips_consecutive_unavailable(void) {
+    FsmDriver d;
+    strcpy(d.snap.msg, "HI");
+    for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);  // land on CUSTOM
+    d.snap.msg[0] = '\0';
+    d.snap.has_pressure = false;  // PRESSURE gone too
+    assert_line(d.idle(), TIME_LINE);
+}
+
+// A new POST bumps msg_seq; the display jumps to CUSTOM so the pushed
+// message actually shows (notification semantics).
+static void test_new_message_jumps_to_custom(void) {
+    FsmDriver d;
+    assert_line(d.idle(), TIME_LINE);
+    strcpy(d.snap.msg, "HI");
+    d.snap.msg_seq++;  // POST arrived
+    assert_line(d.idle(), CUSTOM_LINE);
+    assert_no_effects(d.out);
+}
+
+static void test_same_seq_does_not_rejump(void) {
+    FsmDriver d;
+    strcpy(d.snap.msg, "HI");
+    d.snap.msg_seq++;
+    d.idle();  // jumped to CUSTOM
+    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);  // rotate away
+    assert_line(d.idle(), PRESSURE_LINE);  // stays put: no new POST
+}
+
+static void test_clearing_post_does_not_jump(void) {
+    FsmDriver d;
+    assert_line(d.idle(), TIME_LINE);
+    d.snap.msg_seq++;  // POST of "" — seq bumps but msg stays empty
+    assert_line(d.idle(), TIME_LINE);
+}
+
+static void test_new_message_does_not_interrupt_menu(void) {
+    FsmDriver d;
+    enter_menu(d);
+    strcpy(d.snap.msg, "HI");
+    d.snap.msg_seq++;
+    assert_line(d.idle(), MENU_BRIGHT);  // menu unaffected
+    // The seq is consumed while in the menu: exiting later does not jump.
+    d.feed(UiInput::StepCCW);  // EXIT
+    d.click();
+    assert_line(d.idle(), TIME_LINE);
 }
 
 static void test_click_on_pages_is_unassigned(void) {
@@ -237,6 +315,13 @@ int main(int, char**) {
     RUN_TEST(test_boot_renders_first_page);
     RUN_TEST(test_step_cycles_pages_and_wraps);
     RUN_TEST(test_step_skips_pressure_without_bmp280);
+    RUN_TEST(test_step_cycles_six_pages_with_message);
+    RUN_TEST(test_custom_cleared_mid_display_auto_advances);
+    RUN_TEST(test_auto_advance_skips_consecutive_unavailable);
+    RUN_TEST(test_new_message_jumps_to_custom);
+    RUN_TEST(test_same_seq_does_not_rejump);
+    RUN_TEST(test_clearing_post_does_not_jump);
+    RUN_TEST(test_new_message_does_not_interrupt_menu);
     RUN_TEST(test_click_on_pages_is_unassigned);
     RUN_TEST(test_hold_bar_timeline_and_menu_entry);
     RUN_TEST(test_release_after_fire_is_swallowed);

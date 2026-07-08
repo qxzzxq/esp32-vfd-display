@@ -6,6 +6,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 namespace {
 
@@ -78,6 +79,33 @@ class OutdoorPage : public UiPage {
     static constexpr uint32_t STALE_S = 45 * 60;  // > 3 missed 15-min fetches
 };
 
+class CustomPage : public UiPage {
+  public:
+    void render(char line[17], const UiSnapshot& s, int64_t now_us) const override {
+        int len = (int)strlen(s.msg);
+        if (len <= 16) {  // centered, left-biased (extra space goes right)
+            memset(line, ' ', 16);
+            memcpy(line + (16 - len) / 2, s.msg, len);
+            line[16] = '\0';
+            return;
+        }
+        // Marquee: the 16-char window slides over the text plus a 3-space
+        // wrap gap, one char per 300 ms, phase from the monotonic clock
+        // (stateless — no scroll position survives page switches).
+        const int period = len + 3;
+        int off = (int)((now_us / MARQUEE_STEP_US) % period);
+        for (int i = 0; i < 16; i++) {
+            int idx = (off + i) % period;
+            line[i] = idx < len ? s.msg[idx] : ' ';
+        }
+        line[16] = '\0';
+    }
+    bool available(const UiSnapshot& s) const override { return s.msg[0] != '\0'; }
+
+  private:
+    static constexpr int64_t MARQUEE_STEP_US = 300000;  // 1 char per 300 ms
+};
+
 class PressurePage : public UiPage {
   public:
     void render(char line[17], const UiSnapshot& s, int64_t) const override {
@@ -93,9 +121,10 @@ TimePage s_time;
 DatePage s_date;
 IndoorPage s_indoor;
 OutdoorPage s_outdoor;
+CustomPage s_custom;
 PressurePage s_pressure;
 
-UiPage* const s_pages[] = {&s_time, &s_date, &s_indoor, &s_outdoor, &s_pressure};
+UiPage* const s_pages[] = {&s_time, &s_date, &s_indoor, &s_outdoor, &s_custom, &s_pressure};
 
 }  // namespace
 

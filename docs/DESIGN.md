@@ -54,7 +54,8 @@ own their data and expose copy-out getters — no global state struct, no cross-
   `net_reset_credentials()` (erase ssid/pass, restart).
 - **`web.{h,cpp}`** — one `esp_http_server`, two modes. Portal mode: form + `/save` +
   wildcard 302 + DNS-hijack task on 192.168.4.1; portal HTML as a raw string literal.
-  API mode (STA): `/api/message`, `/api/status`.
+  API mode (STA): `/api/message`, `/api/status`; owns the RAM-only custom message
+  (copy-out `web_get_message()`).
 - **`ui.{h,cpp}`** — thin platform shell: owns the `VFDDisplay` instance and the encoder
   loop, builds the per-tick `UiSnapshot` from the producer modules, draws the line the
   core returns, and executes the returned `UiEffect`s. `ui_run()` never returns.
@@ -95,7 +96,7 @@ pauses auto-cycle for 30 s):
 | 2 | DATE     | ` SAT 2026-07-05 `   | ` NO TIME SYNC   ` |
 | 3 | INDOOR   | `IN  23.4C   47% `   | `IN  SENSOR ERR  ` |
 | 4 | OUTDOOR  | `OUT 31C 60% UV9 `   | `OUT NO DATA` / `SET LOCATION` if lat/lon empty; `?` suffix if >45 min old |
-| 5 | CUSTOM   | POST'd text; >16 ch → marquee, 1 char / 300 ms | skipped in rotation when empty |
+| 5 | CUSTOM   | POST'd text; ≤16 ch centered; >16 ch → marquee, 1 char / 300 ms, wraps through a 3-space gap | skipped in rotation when empty; auto-advances if cleared while shown; a non-empty POST jumps the display here (never interrupts the menu) |
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
@@ -125,9 +126,11 @@ immediate `settings_save` + live apply; 20 s inactivity or long-press = exit to 
 No auth — trusted LAN, accepted risk (a static-token header check is a small add later).
 
 - `POST /api/message` — body `{"text":"PIZZA AT 7PM"}`. Validation: `text` required,
-  string, ≤64 chars, printable ASCII 0x20–0x7E. Empty string clears the page. Persisted
-  to NVS (`msg`), survives reboot, replaced by next POST. Responses: `200 {"ok":true}`,
-  `400 {"error":"..."}`, `413` if body >256 B.
+  string, ≤64 chars, printable ASCII 0x20–0x7E. Empty string clears the page. Held in
+  RAM only (owned by `web`) — cleared on reboot, replaced by next POST; deliberately
+  not persisted (ephemeral by nature, avoids NVS wear). A non-empty POST switches the
+  display to the CUSTOM page (notification semantics; the menu is never interrupted).
+  Responses: `200 {"ok":true}`, `400 {"error":"..."}`, `413` if body >256 B.
 - `GET /api/message` — `{"text":"..."}`.
 - `GET /api/status` — `{"time":"2026-07-05T14:25:36","synced":true,`
   `"indoor":{"t":23.4,"rh":47.0,"p":1013.2},`
@@ -170,7 +173,6 @@ Namespace `vfdclk`:
 | `tz_idx`       | u8   | 0 (UTC)  | index into timezone table |
 | `cycle_s`      | u8   | 0        | 0 = auto-cycle off |
 | `lat` / `lon`  | str  | ""       | strings (NVS has no float); empty ⇒ weather disabled |
-| `msg`          | str  | ""       | custom page text |
 
 ## Weather API
 
@@ -237,9 +239,16 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   appears. Not yet exercised: recovery on reconnect (expect fresh values and the
   `?` gone within ~15 min of the router returning); values not formally
   cross-checked against open-meteo.com.
-- **M6 — HTTP API + custom page**: *Verify:* `curl -X POST http://<ip>/api/message -d
-  '{"text":"HELLO"}'` shows page; 65-char text → 400; long text marquees; survives
-  reboot; `GET /api/status` sane.
+- **M6 — HTTP API + custom page** ✅ (2026-07-07): `/api/message` (POST/GET) +
+  `/api/status` + CUSTOM page with centered/marquee rendering.
+  *Verified on hardware (curl against the live device):* POST shows the page and
+  round-trips through GET; 64-char text accepted, 65 → 400; missing/non-string
+  text, bad JSON, and ``-smuggled control chars → 400; >256 B body → 413;
+  `"`/`\` escaping round-trips; `/api/status` sane (synced local time, plausible
+  indoor/weather, negative RSSI); heap stable across 60 requests. The message is
+  RAM-only by design (cleared on reboot — no NVS wear). Not yet exercised by eye:
+  marquee cadence/wrap gap on the VFD, auto-advance when the shown message is
+  cleared.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields. *Verify:* overnight soak — no reboots, clock correct, heap stable
   (via /api/status).

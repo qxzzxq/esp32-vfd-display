@@ -1,16 +1,23 @@
 #include "web.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
+#include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
+#include "net.h"
+#include "sensors.h"
 #include "settings.h"
+#include "weather.h"
 
 static const char* TAG = "web";
 
@@ -189,4 +196,205 @@ void web_start_portal() {
 
     xTaskCreate(dns_task, "dns", 3072, nullptr, 3, nullptr);
     ESP_LOGI(TAG, "portal http server + dns hijack up");
+}
+
+// ---- STA-mode JSON API ------------------------------------------------
+
+static httpd_handle_t s_api = nullptr;
+
+// Custom message: RAM-only by design — ephemeral (lost on reboot, like any
+// pushed notification) and free of NVS wear. 64 chars + NUL per the API
+// contract; written by the httpd task, read by the UI task per tick.
+static char s_msg[65] = "";
+static uint32_t s_msg_seq = 0;
+static portMUX_TYPE s_msg_lock = portMUX_INITIALIZER_UNLOCKED;
+
+uint32_t web_get_message(char out[65]) {
+    taskENTER_CRITICAL(&s_msg_lock);
+    strcpy(out, s_msg);
+    uint32_t seq = s_msg_seq;
+    taskEXIT_CRITICAL(&s_msg_lock);
+    return seq;
+}
+
+// JSON error response. Returns ESP_FAIL so httpd closes the connection,
+// which also discards the unread body on the 413 path.
+static esp_err_t json_error(httpd_req_t* req, const char* status, const char* msg) {
+    char buf[96];  // msg is always a fixed ASCII literal — no escaping needed
+    snprintf(buf, sizeof(buf), "{\"error\":\"%s\"}", msg);
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_FAIL;
+}
+
+// Sends a built cJSON tree and frees it.
+static esp_err_t send_json(httpd_req_t* req, cJSON* root) {
+    char* out = root ? cJSON_PrintUnformatted(root) : nullptr;
+    cJSON_Delete(root);
+    if (!out) return json_error(req, "500 Internal Server Error", "out of memory");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    cJSON_free(out);
+    return ESP_OK;
+}
+
+// cJSON prints raw floats with up to 15 significant digits of promotion
+// noise ("23.3999996185303"); round to the one decimal the display shows.
+static void add_num1(cJSON* o, const char* k, float v) {
+    cJSON_AddNumberToObject(o, k, round((double)v * 10.0) / 10.0);
+}
+
+static esp_err_t msg_post_handler(httpd_req_t* req) {
+    if (req->content_len > 256)
+        return json_error(req, "413 Content Too Large", "body too large");
+    int len = req->content_len;
+    if (len <= 0) return json_error(req, "400 Bad Request", "empty body");
+    char body[257];
+    int got = 0;
+    while (got < len) {
+        int r = httpd_req_recv(req, body + got, len - got);
+        if (r <= 0) return ESP_FAIL;
+        got += r;
+    }
+    body[len] = '\0';
+
+    // A raw NUL byte inside the body would end the C string early, hiding
+    // trailing bytes from the whole-body parse check below. Valid JSON
+    // never contains one (control chars must be escaped inside strings).
+    if (memchr(body, '\0', (size_t)len))
+        return json_error(req, "400 Bad Request", "invalid JSON");
+
+    // cJSON decodes a backslash-u-0000 escape into an embedded NUL the strlen-based checks
+    // below cannot see (the text would silently truncate); reject it in the
+    // raw body. The walk is escape-aware so a literal backslash followed by
+    // "u0000" (JSON "\\u0000") still passes.
+    for (const char* p = body; *p; p++) {
+        if (*p != '\\') continue;
+        if (p[1] == 'u' && strncmp(p + 2, "0000", 4) == 0)
+            return json_error(req, "400 Bad Request", "text must be printable ASCII");
+        if (p[1]) p++;  // skip the escaped char so "\\\\" is not an escape prefix
+    }
+
+    // require_null_terminated: trailing garbage after the JSON value
+    // ("{...}extra") must 400, not silently parse the prefix.
+    cJSON* root = cJSON_ParseWithOpts(body, nullptr, true);
+    if (!root) return json_error(req, "400 Bad Request", "invalid JSON");
+    cJSON* text = cJSON_GetObjectItem(root, "text");
+    if (!cJSON_IsString(text)) {
+        cJSON_Delete(root);
+        return json_error(req, "400 Bad Request", "text must be a string");
+    }
+    size_t n = strlen(text->valuestring);
+    if (n > 64) {
+        cJSON_Delete(root);
+        return json_error(req, "400 Bad Request", "text too long (max 64)");
+    }
+    for (size_t i = 0; i < n; i++) {
+        // Unsigned compare also rejects UTF-8 bytes and controls smuggled
+        // in as \u escapes (cJSON unescapes them to raw bytes).
+        unsigned char c = (unsigned char)text->valuestring[i];
+        if (c < 0x20 || c > 0x7E) {
+            cJSON_Delete(root);
+            return json_error(req, "400 Bad Request", "text must be printable ASCII");
+        }
+    }
+
+    taskENTER_CRITICAL(&s_msg_lock);
+    strlcpy(s_msg, text->valuestring, sizeof(s_msg));  // empty string clears
+    s_msg_seq++;
+    taskEXIT_CRITICAL(&s_msg_lock);
+    cJSON_Delete(root);
+    ESP_LOGI(TAG, "message set (%d chars)", (int)n);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+static esp_err_t msg_get_handler(httpd_req_t* req) {
+    char msg[65];
+    web_get_message(msg);
+    cJSON* root = cJSON_CreateObject();
+    if (root && !cJSON_AddStringToObject(root, "text", msg)) {
+        cJSON_Delete(root);
+        root = nullptr;
+    }
+    return send_json(req, root);  // cJSON escapes any " or \ in the text
+}
+
+static esp_err_t status_get_handler(httpd_req_t* req) {
+    cJSON* root = cJSON_CreateObject();
+    if (!root) return send_json(req, nullptr);
+
+    time_t now = time(nullptr);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    char ts[20];
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", &tm_now);
+    cJSON_AddStringToObject(root, "time", ts);
+    cJSON_AddBoolToObject(root, "synced", net_time_synced());
+
+    float tC, rh, hPa;
+    if (sensors_get(&tC, &rh, &hPa)) {
+        cJSON* in = cJSON_AddObjectToObject(root, "indoor");
+        if (in) {
+            add_num1(in, "t", tC);
+            add_num1(in, "rh", rh);
+            // hPa is NAN without a BMP280; cJSON's number bookkeeping does a
+            // double→int conversion that is UB on NAN, so branch explicitly.
+            if (isnan(hPa))
+                cJSON_AddNullToObject(in, "p");
+            else
+                add_num1(in, "p", hPa);
+        }
+    } else {
+        cJSON_AddNullToObject(root, "indoor");
+    }
+
+    Weather w;
+    if (weather_get(&w)) {
+        cJSON* wo = cJSON_AddObjectToObject(root, "weather");
+        if (wo) {
+            add_num1(wo, "t", w.tC);
+            add_num1(wo, "rh", w.rh);
+            add_num1(wo, "uv", w.uv);
+            cJSON_AddNumberToObject(
+                wo, "age_s", (double)((esp_timer_get_time() - w.fetched_us) / 1000000));
+        }
+    } else {
+        cJSON_AddNullToObject(root, "weather");
+    }
+
+    int8_t rssi;
+    if (net_get_rssi(&rssi))
+        cJSON_AddNumberToObject(root, "rssi", rssi);
+    else
+        cJSON_AddNullToObject(root, "rssi");
+    cJSON_AddNumberToObject(root, "heap", (double)esp_get_free_heap_size());
+
+    return send_json(req, root);
+}
+
+void web_start_api() {
+    if (s_api) return;  // GOT_IP re-fires on reconnect; the server survives drops
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();  // default exact URI matching
+    ESP_ERROR_CHECK(httpd_start(&s_api, &cfg));
+
+    static const httpd_uri_t msg_post = {.uri = "/api/message",
+                                         .method = HTTP_POST,
+                                         .handler = msg_post_handler,
+                                         .user_ctx = nullptr};
+    static const httpd_uri_t msg_get = {.uri = "/api/message",
+                                        .method = HTTP_GET,
+                                        .handler = msg_get_handler,
+                                        .user_ctx = nullptr};
+    static const httpd_uri_t status_get = {.uri = "/api/status",
+                                           .method = HTTP_GET,
+                                           .handler = status_get_handler,
+                                           .user_ctx = nullptr};
+    httpd_register_uri_handler(s_api, &msg_post);
+    httpd_register_uri_handler(s_api, &msg_get);
+    httpd_register_uri_handler(s_api, &status_get);
+    ESP_LOGI(TAG, "api server up");
 }
