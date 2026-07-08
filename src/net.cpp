@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
@@ -86,6 +87,7 @@ static void wifi_event_handler(void*, esp_event_base_t base, int32_t id, void* d
         s_backoff_ms = 1000;
         s_state = NetState::Connected;
         ESP_LOGI(TAG, "got ip %s", s_ip);
+        web_start_api();  // idempotent — GOT_IP re-fires on every reconnect
     }
 }
 
@@ -194,4 +196,18 @@ void net_reset_credentials() {
     st.pass[0] = '\0';
     settings_save(st);
     esp_restart();
+}
+
+bool net_time_synced() {
+    // Same threshold as ui.cpp's MIN_VALID_EPOCH (2021-01-01): the clock
+    // starts at 1970 and only SNTP can move it past this. Duplicated
+    // deliberately — ui.cpp is untouched in this PR; unify at M7.
+    return time(nullptr) >= 1609459200;
+}
+
+bool net_get_rssi(int8_t* out) {
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return false;
+    *out = ap.rssi;
+    return true;
 }

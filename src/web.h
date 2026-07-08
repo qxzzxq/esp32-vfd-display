@@ -4,7 +4,12 @@
 // Captive provisioning portal (AP mode): form at /, POST /save persists to
 // settings and reboots, any other GET 302-redirects to the form (catches
 // captive-portal probes). Also starts the DNS hijack task answering every
-// A query with 192.168.4.1. The /api/* server (STA mode) lands in M6.
+// A query with 192.168.4.1.
 void web_start_portal();
+
+// STA-mode JSON API on port 80: POST/GET /api/message, GET /api/status.
+// Idempotent — safe to call on every GOT_IP (reconnects included). Never
+// runs concurrently with the portal (different boot paths).
+void web_start_api();
 
 #endif
