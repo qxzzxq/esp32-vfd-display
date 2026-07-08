@@ -94,6 +94,14 @@ static void execute_effect(const UiEffect& e) {
 }
 
 void ui_run() {
+    // Single-core C3: keep this UI task above the net worker (prio 3, net.cpp)
+    // so render bursts preempt its CPU-heavy work (TLS on the first weather
+    // fetch) instead of stalling animation frames — otherwise a roll drops its
+    // tail frames and finishes with a stutter during the post-boot network
+    // burst. The UI blocks on the encoder queue between frames, so the worker
+    // still gets essentially all the CPU.
+    vTaskPrioritySet(nullptr, 4);
+
     s_vfd.init();
     s_vfd.clear();
     s_vfd.setBrightness(settings_get().bright);

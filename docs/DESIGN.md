@@ -76,7 +76,9 @@ own their data and expose copy-out getters — no global state struct, no cross-
   edit-mode blink, marquee, auto-cycle). The idle wait is normally 100 ms but is shortened
   to land on the next whole second, so the TIME roll starts on the beat rather than up to
   100 ms late (aligned via `gettimeofday`, floored at one FreeRTOS tick). Only this task
-  touches the VFD.
+  touches the VFD. Runs at prio 4 — above the worker (below) — so on the single-core C3 its
+  brief render bursts preempt the worker's CPU-heavy TLS instead of stalling animation
+  frames during the post-boot network burst.
 - **Worker task** (in `net.cpp`, prio 3, 8 KB stack — the in-task TLS handshake of
   `weather_fetch` peaks ~5 KB): 1 s loop; sensors every 10 s;
   weather every 15 min when Connected and lat/lon set (retry after 2 min on failure,
