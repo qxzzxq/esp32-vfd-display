@@ -41,9 +41,9 @@ class UiFsm {
     void render(char line[17], int64_t now_us, const UiSnapshot& s) const;
     void render_hold_bar(char line[17], int64_t held_us) const;
     static void render_portal_banner(char line[17], int64_t now_us, const UiSnapshot& s);
-    // Roll animation: detect triggers (page change or opted-in content
-    // change — all changed cells roll in lockstep), then composite the
-    // active roll into line/out->glyphs. Only called for un-overlaid
+    // Roll animation: detect an opted-in content change (TIME second tick —
+    // all changed cells roll in lockstep; page changes snap), then composite
+    // the active roll into line/out->glyphs. Only called for un-overlaid
     // Pages-mode frames; line holds the target content on entry.
     void apply_roll(char line[17], int64_t now_us, UiOutput* out);
     static void default_glyphs(UiOutput* out);
@@ -64,13 +64,10 @@ class UiFsm {
     // live each tick, so mid-flight content changes just retarget.
     struct RollState {
         bool active = false;
-        bool upward = true;
-        int steps = UI_ROLL_STEPS;  // UI_PAGE_ROLL_STEPS for page changes
         int64_t start_us = 0;
         char from[17] = {};
     };
     RollState roll_;
-    int dir_hint_ = 1;             // set by handle_step, consumed by apply_roll
     uint8_t prev_page_ = 0xFF;     // 0xFF = no valid pages frame to roll from
     char prev_content_[17] = {};   // last Pages-mode logical (pre-roll) content
 };

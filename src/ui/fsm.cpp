@@ -126,7 +126,6 @@ void UiFsm::handle_step(int dir, const UiSnapshot& s, UiOutput& out) {
             do {
                 page_ = (uint8_t)((page_ + dir + page_count_) % page_count_);
             } while (!pages_[page_]->available(s));
-            dir_hint_ = dir;  // the roll drum follows the knob direction
             break;
         case Mode::Menu:
             item_ = (uint8_t)((item_ + dir + item_count_) % item_count_);
@@ -190,64 +189,48 @@ void UiFsm::default_glyphs(UiOutput* out) {
 }
 
 void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
-    // Trigger detection against the previous pages frame: a page change
-    // (rotation, msg-jump, availability auto-advance, future auto-cycle) or
-    // an opted-in same-page content change (TIME second tick). Either way
-    // all changed cells roll together in lockstep.
+    // Trigger: an opted-in same-page content change (TIME second tick) rolls
+    // its changed cells. Page changes snap — animating a whole page
+    // transition was tried and dropped: 16 cells need more simultaneous
+    // composites than the 8-glyph CGRAM can hold.
     if (prev_page_ != 0xFF) {
         if (page_ != prev_page_) {
-            // Page roll: 7-row gap, so the whole old line rolls out before
-            // the new one rolls in — every frame shows one char per cell,
-            // which is what lets 7 CGRAM slots animate all 16 cells.
-            roll_.active = true;
-            roll_.upward = dir_hint_ >= 0;
-            roll_.steps = UI_PAGE_ROLL_STEPS;
-            roll_.start_us = now_us;
-            memcpy(roll_.from, prev_content_, 17);
+            roll_.active = false;  // new page: drop any roll and snap
         } else if (!roll_.active && pages_[page_]->rolls_on_change() &&
                    strcmp(line, prev_content_) != 0) {
             roll_.active = true;
-            roll_.upward = true;
-            roll_.steps = UI_ROLL_STEPS;
             roll_.start_us = now_us;
             memcpy(roll_.from, prev_content_, 17);
         }
     }
-    dir_hint_ = 1;
     prev_page_ = page_;
     memcpy(prev_content_, line, 17);  // always the logical target
     if (!roll_.active) return;
 
     int64_t elapsed = now_us - roll_.start_us;
     int k = elapsed <= 0 ? 0 : (int)(elapsed / UI_ROLL_STEP_US);
-    if (k >= roll_.steps) {
+    if (k >= UI_ROLL_STEPS) {
         roll_.active = false;  // line already holds the target
         return;
     }
     // Composite the roll over the target. Slots are keyed by the pair of
     // *visible* chars — the from glyph is on screen only while k <= 6, the
-    // to glyph only once k >= steps - 6 — so cells exiting or entering the
-    // same char share one slot (their composites are identical at equal k).
-    // Slots are reallocated left->right every frame (stateless; the shell
-    // diff-uploads changes). If distinct keys ever exceed the 7 slots (a
-    // content roll with > 7 pairs, e.g. the 24H format flip, or a line with
-    // > 7 distinct chars in one page-roll phase), the excess cells hold the
-    // old char and flip to the new at the midpoint, coherent with the motion.
+    // to glyph only once k >= 2 — so cells rolling the same chars share one
+    // slot (their composites are identical at equal k). Slots are
+    // reallocated left->right every frame (stateless; the shell diff-uploads
+    // changes). If distinct keys ever exceed the 7 slots (> 7 distinct
+    // pairs, e.g. the 24H format flip), the excess cells hold the old char
+    // and flip to the new at the midpoint.
     char key_from[7], key_to[7];
     int pairs = 0;
-    bool page_roll = roll_.steps == UI_PAGE_ROLL_STEPS;
     for (int i = 0; i < 16; i++) {
-        // Page rolls move every cell — even chars the two pages share —
-        // so the whole line visibly travels; content rolls move only the
-        // changed cells (a clock's unchanged digits must hold still).
-        if (roll_.from[i] == line[i] && !(page_roll && line[i] != ' '))
-            continue;
+        if (roll_.from[i] == line[i]) continue;
         if (k == 0) {
             line[i] = roll_.from[i];  // trigger frame: not moving yet
             continue;
         }
         char ef = k <= 6 ? roll_.from[i] : ' ';
-        char et = k >= roll_.steps - 6 ? line[i] : ' ';
+        char et = k >= UI_ROLL_STEPS - 6 ? line[i] : ' ';
         if (ef == ' ' && et == ' ') {
             line[i] = ' ';  // both glyphs out of the window
             continue;
@@ -256,13 +239,12 @@ void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
         while (p < pairs && !(key_from[p] == ef && key_to[p] == et)) p++;
         if (p == pairs) {
             if (pairs == 7) {  // out of slots: coarse midpoint flip
-                if (k * 2 < roll_.steps) line[i] = roll_.from[i];
+                if (k * 2 < UI_ROLL_STEPS) line[i] = roll_.from[i];
                 continue;
             }
             key_from[p] = ef;
             key_to[p] = et;
-            ui_roll_composite(ef, et, k, roll_.upward, roll_.steps,
-                              out->glyphs[p + 1]);
+            ui_roll_composite(ef, et, k, out->glyphs[p + 1]);
             pairs++;
         }
         line[i] = (char)(p + 1);

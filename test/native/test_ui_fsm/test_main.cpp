@@ -46,17 +46,6 @@ static void enter_menu(FsmDriver& d) {
     assert_line(d.idle(), MENU_BRIGHT);
 }
 
-// Page changes animate (a roll wave whose trigger frame still shows the old
-// page — pinned in test_ui_roll). These helpers land on the destination.
-static const UiOutput& step_settled(FsmDriver& d, UiInput in) {
-    d.feed(in);
-    return d.settle();
-}
-static const UiOutput& idle_settled(FsmDriver& d) {
-    d.idle();
-    return d.settle();
-}
-
 static void test_boot_renders_first_page(void) {
     FsmDriver d;
     assert_line(d.idle(), TIME_LINE);
@@ -67,12 +56,12 @@ static void test_boot_renders_first_page(void) {
 // (OUTDOOR steps straight to PRESSURE in both directions).
 static void test_step_cycles_pages_and_wraps(void) {
     FsmDriver d;
-    assert_line(step_settled(d, UiInput::StepCW), DATE_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), INDOOR_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), OUTDOOR_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), PRESSURE_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), TIME_LINE);  // wraps forward
-    assert_line(step_settled(d, UiInput::StepCCW), PRESSURE_LINE);  // wraps backward
+    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
+    assert_line(d.feed(UiInput::StepCW), INDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), OUTDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);
+    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // wraps forward
+    assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);  // wraps backward
 }
 
 // Empty msg here too: CUSTOM and PRESSURE are skipped back to back.
@@ -82,21 +71,21 @@ static void test_step_skips_pressure_without_bmp280(void) {
     d.feed(UiInput::StepCW);  // DATE
     d.feed(UiInput::StepCW);  // INDOOR
     d.feed(UiInput::StepCW);  // OUTDOOR
-    assert_line(step_settled(d, UiInput::StepCW), TIME_LINE);  // skips PRESSURE
-    assert_line(step_settled(d, UiInput::StepCCW), OUTDOOR_LINE);  // skips backward too
+    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // skips PRESSURE
+    assert_line(d.feed(UiInput::StepCCW), OUTDOOR_LINE);  // skips backward too
 }
 
 static void test_step_cycles_six_pages_with_message(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
-    assert_line(step_settled(d, UiInput::StepCW), DATE_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), INDOOR_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), OUTDOOR_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), CUSTOM_LINE);  // #5, after OUTDOOR
-    assert_line(step_settled(d, UiInput::StepCW), PRESSURE_LINE);
-    assert_line(step_settled(d, UiInput::StepCW), TIME_LINE);  // wraps forward
-    assert_line(step_settled(d, UiInput::StepCCW), PRESSURE_LINE);
-    assert_line(step_settled(d, UiInput::StepCCW), CUSTOM_LINE);  // backward too
+    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
+    assert_line(d.feed(UiInput::StepCW), INDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), OUTDOOR_LINE);
+    assert_line(d.feed(UiInput::StepCW), CUSTOM_LINE);  // #5, after OUTDOOR
+    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);
+    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // wraps forward
+    assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);
+    assert_line(d.feed(UiInput::StepCCW), CUSTOM_LINE);  // backward too
 }
 
 // A page can lose availability while it is on screen (CUSTOM cleared via
@@ -106,9 +95,9 @@ static void test_custom_cleared_mid_display_auto_advances(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);  // land on CUSTOM
-    assert_line(d.settle(), CUSTOM_LINE);
+    assert_line(d.out, CUSTOM_LINE);
     d.snap.msg[0] = '\0';  // cleared via the API mid-display
-    assert_line(idle_settled(d), PRESSURE_LINE);
+    assert_line(d.idle(), PRESSURE_LINE);
     assert_no_effects(d.out);
 }
 
@@ -116,10 +105,9 @@ static void test_auto_advance_skips_consecutive_unavailable(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);  // land on CUSTOM
-    d.settle();
     d.snap.msg[0] = '\0';
     d.snap.has_pressure = false;  // PRESSURE gone too
-    assert_line(idle_settled(d), TIME_LINE);
+    assert_line(d.idle(), TIME_LINE);
 }
 
 // A new POST bumps msg_seq; the display jumps to CUSTOM so the pushed
@@ -129,7 +117,7 @@ static void test_new_message_jumps_to_custom(void) {
     assert_line(d.idle(), TIME_LINE);
     strcpy(d.snap.msg, "HI");
     d.snap.msg_seq++;  // POST arrived
-    assert_line(idle_settled(d), CUSTOM_LINE);
+    assert_line(d.idle(), CUSTOM_LINE);
     assert_no_effects(d.out);
 }
 
@@ -137,8 +125,8 @@ static void test_same_seq_does_not_rejump(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     d.snap.msg_seq++;
-    idle_settled(d);  // jumped to CUSTOM
-    assert_line(step_settled(d, UiInput::StepCW), PRESSURE_LINE);  // rotate away
+    d.idle();  // jumped to CUSTOM
+    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);  // rotate away
     assert_line(d.idle(), PRESSURE_LINE);  // stays put: no new POST
 }
 
@@ -209,16 +197,11 @@ static void test_release_exactly_at_threshold_is_lost(void) {
 
 static void test_rotation_while_held_still_steps(void) {
     FsmDriver d;
-    d.idle();
     d.feed(UiInput::BtnDown);
     d.idle(3);  // held 300 ms, no bar yet
-    // The step lands mid-roll-trigger (old page still shown), then the bar
-    // keeps filling from the original press and overrides the roll.
-    assert_line(d.feed(UiInput::StepCW), TIME_LINE);
+    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
+    // The bar keeps filling from the original press.
     assert_line(d.idle(4), "MENU     [\x7F\x7F   ]");  // held 700 ms
-    // Release below the 1.0 s threshold: the unassigned pages-click renders
-    // the stepped-to page, proving the rotation registered.
-    assert_line(d.feed(UiInput::BtnUp), DATE_LINE);
 }
 
 // The fill is column-granular: between the 100 ms tick boundaries the leading

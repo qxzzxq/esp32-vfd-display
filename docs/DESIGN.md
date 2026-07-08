@@ -112,24 +112,20 @@ blocks.
 
 **Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll state in `UiFsm`): vertical
 split-flap roll — a cell's old glyph exits through the top while the new one enters from
-below, all cells in lockstep, one row per 40 ms step, composited into CGRAM from an
-embedded 5×7 font (full printable ASCII; shapes match the CGROM so the hand-off at the
-roll's end is seamless — patch `font5x7.cpp` by eye if a glyph pops).
+below (one blank gap row between them), 8 steps × 40 ms ≈ 320 ms, all changed cells in
+lockstep, composited into CGRAM from an embedded 5×7 font (full printable ASCII; shapes
+match the CGROM so the hand-off at the roll's end is seamless — patch `font5x7.cpp` by
+eye if a glyph pops).
 
-- **Content rolls** (TIME seconds tick / rollovers; `UiPage::rolls_on_change()` opt-in —
-  other pages and the CUSTOM marquee deliberately don't animate on content change):
-  changed cells roll with a 1-row gap, 8 steps ≈ 320 ms; old and new glyph briefly share
-  the cell, so CGRAM slots are keyed by old→new pair (identical pairs share, e.g. a
-  `11:11:11 → 22:22:22` rollover uses one slot for all six digits).
-- **Page rolls** (rotation, CUSTOM msg-jump, availability auto-advance, auto-cycle): the
-  **whole line** — every non-blank cell, including chars both pages share — rolls out
-  through a 7-row gap and the new line rolls in behind it, 14 steps ≈ 560 ms. The wide
-  gap means each frame shows a single character per cell, so slots are keyed per
-  character (repeats share) and 7 slots animate all 16 cells. CW/automatic changes roll
-  upward, CCW rolls downward (the drum follows the knob).
-- **Slot overflow** (a phase with > 7 distinct characters, or a content roll with > 7
-  distinct pairs — e.g. the 24H format flip): the excess cells hold the old char and
-  flip to the new at the midpoint, coherent with the surrounding motion.
+- **Trigger**: same-page content changes for pages opting in via
+  `UiPage::rolls_on_change()` — TIME only (seconds tick, rollovers); other pages and the
+  CUSTOM marquee deliberately don't animate. **Page changes snap** — a page-transition
+  roll was tried and removed: 16 cells need more simultaneous composites than the
+  8-glyph CGRAM can hold, and a partially-animated line reads as broken.
+- **Slot budget**: CGRAM slots are keyed by the visible old→new chars, so cells rolling
+  the same chars share one slot (a `11:11:11 → 22:22:22` rollover uses a single slot for
+  all six digits). With > 7 distinct pairs (only the 24H format flip in practice) the
+  excess cells hold the old char and flip at the midpoint.
 - **Interactions**: any input snaps the roll to its target before it is processed; the
   hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
   (returning to the pages snaps). The roll target is recomputed live each tick, so a
@@ -300,9 +296,9 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   cleared.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
-  vertical-roll animations (TIME digits + page changes — done, v0.10.0; see
-  "Animations"). *Verify:* overnight soak — no reboots, clock correct, heap stable
-  (via /api/status).
+  vertical-roll animation (TIME digits — done, v0.10.0; a page-change roll was
+  tried and removed after hardware testing, see "Animations"). *Verify:* overnight
+  soak — no reboots, clock correct, heap stable (via /api/status).
 
 ## Open questions / risks
 

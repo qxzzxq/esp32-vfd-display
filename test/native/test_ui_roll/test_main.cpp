@@ -1,8 +1,8 @@
 // Roll-animation tests: the 5x7 font, the split-flap frame compositor, the
-// UiOutput glyph channel, and the FSM roll triggers (all changed cells roll
-// in lockstep — TIME ticks and page changes alike — with slot sharing by
-// from->to pair, snap-on-input, overlay suppression). Timelines advance in
-// the shell's 40 ms animation frames via FsmDriver::idle_us/settle.
+// UiOutput glyph channel, and the FSM roll trigger (opted-in content changes
+// — TIME ticks — roll their changed cells in lockstep with slot sharing;
+// page changes snap; input snaps a roll; overlays suppress it). Timelines
+// advance in the shell's 40 ms animation frames via FsmDriver::idle_us/settle.
 #include <string.h>
 #include <unity.h>
 
@@ -22,12 +22,6 @@ static const char* CUSTOM_LINE = "       HI       ";
 
 static void assert_line(const UiOutput& out, const char* expect) {
     TEST_ASSERT_EQUAL_STRING(expect, out.line);
-}
-
-// Step to the next page and let the wave finish.
-static const UiOutput& step_settled(FsmDriver& d, UiInput in) {
-    d.feed(in);
-    return d.settle();
 }
 
 // ---- font ----
@@ -59,49 +53,26 @@ static void test_font_spot_checks(void) {
 
 static void test_composite_endpoints_are_pure_glyphs(void) {
     const char pairs[][2] = {{'0', '1'}, {'A', 'Z'}, {' ', 'P'}};
-    const int steps[2] = {UI_ROLL_STEPS, UI_PAGE_ROLL_STEPS};
     for (auto& p : pairs) {
-        for (auto s : steps) {
-            for (int up = 0; up <= 1; up++) {
-                uint8_t cols[5];
-                ui_roll_composite(p[0], p[1], 0, up, s, cols);
-                TEST_ASSERT_EQUAL_UINT8_ARRAY(ui_font_glyph(p[0]), cols, 5);
-                ui_roll_composite(p[0], p[1], s, up, s, cols);
-                TEST_ASSERT_EQUAL_UINT8_ARRAY(ui_font_glyph(p[1]), cols, 5);
-            }
-        }
+        uint8_t cols[5];
+        ui_roll_composite(p[0], p[1], 0, cols);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(ui_font_glyph(p[0]), cols, 5);
+        ui_roll_composite(p[0], p[1], UI_ROLL_STEPS, cols);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(ui_font_glyph(p[1]), cols, 5);
     }
 }
 
-static void test_composite_upward_mid_frames(void) {
+static void test_composite_mid_frames(void) {
     // Hand-derived from the '0' and '1' columns: at k the old glyph has
     // shifted up k rows; the new glyph's top row sits k-1 rows into view
     // (one blank gap row between them).
     static const uint8_t K3[5] = {0x07, 0x4A, 0x69, 0x08, 0x07};
     static const uint8_t K4[5] = {0x03, 0x25, 0x74, 0x04, 0x03};
     uint8_t cols[5];
-    ui_roll_composite('0', '1', 3, true, UI_ROLL_STEPS, cols);
+    ui_roll_composite('0', '1', 3, cols);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(K3, cols, 5);
-    ui_roll_composite('0', '1', 4, true, UI_ROLL_STEPS, cols);
+    ui_roll_composite('0', '1', 4, cols);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(K4, cols, 5);
-}
-
-static void test_composite_downward_mid_frame(void) {
-    static const uint8_t K2[5] = {0x78, 0x45, 0x25, 0x15, 0x78};
-    uint8_t cols[5];
-    ui_roll_composite('0', '1', 2, false, UI_ROLL_STEPS, cols);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(K2, cols, 5);
-}
-
-static void test_composite_page_roll_gap_never_mixes_glyphs(void) {
-    // With the page roll's 7-row gap the two glyphs are never on screen
-    // together: mid-travel (k = 7) the window is fully inside the gap.
-    static const uint8_t BLANK[5] = {0, 0, 0, 0, 0};
-    uint8_t cols[5];
-    ui_roll_composite('A', 'B', 7, true, UI_PAGE_ROLL_STEPS, cols);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(BLANK, cols, 5);
-    ui_roll_composite('A', 'B', 7, false, UI_PAGE_ROLL_STEPS, cols);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(BLANK, cols, 5);
 }
 
 // ---- glyph channel ----
@@ -132,8 +103,7 @@ static void test_time_second_roll_timeline(void) {
     uint8_t expect[5];
     for (int k = 1; k < UI_ROLL_STEPS; k++) {
         assert_line(d.idle_us(40000), "    14:25:3\x01    ");
-        ui_roll_composite(k <= 6 ? '6' : ' ', k >= 2 ? '7' : ' ', k, true,
-                          UI_ROLL_STEPS, expect);
+        ui_roll_composite(k <= 6 ? '6' : ' ', k >= 2 ? '7' : ' ', k, expect);
         TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
     }
     // Final frame: pure ASCII again, defaults restored, animation over.
@@ -176,31 +146,17 @@ static void test_over_budget_lockstep_flips_excess_at_midpoint(void) {
     assert_line(d.out, "   2:25:36 PM   ");
 }
 
-// ---- page-change roll ----
+// ---- page changes snap ----
 
-static void test_page_change_rolls_whole_line_through_blank(void) {
+static void test_page_change_snaps_instantly(void) {
+    // Page-transition animation was tried and removed (7 CGRAM slots cannot
+    // composite a whole 16-cell line): a step lands directly on the new page.
     FsmDriver d;
     d.idle();
-    // Trigger frame still shows the old page in full.
-    assert_line(d.feed(UiInput::StepCW), TIME_LINE);
-    TEST_ASSERT_TRUE(d.out.animating);
-    // Exit phase: every non-blank cell rolls out — including the '2' the two
-    // pages share — keyed per character, so both ':' cells share a slot.
-    assert_line(d.idle_us(40000), "    \x01\x02\x03\x04\x05\x03\x06\x07    ");
-    uint8_t expect[5];
-    ui_roll_composite('1', ' ', 1, true, UI_PAGE_ROLL_STEPS, expect);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
-    // Mid-travel (k = 7) the old line has fully left and the new one has not
-    // arrived: the display is blank for one frame.
-    d.idle_us(40000, 6);
-    assert_line(d.out, "                ");
-    // Entry phase (k = 8): the DATE line rolls in keyed per character ('2',
-    // '0' and '-' repeat -> shared slots); its 8th and 9th distinct chars
-    // ('7', '5') exceed the slots and sit at their targets past the midpoint.
-    assert_line(d.idle_us(40000),
-                " \x01\x02\x03 \x04\x05\x04\x06\x07\x05" "7\x07\x05" "5 ");
-    d.settle();
-    assert_line(d.out, DATE_LINE);
+    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
+    TEST_ASSERT_FALSE(d.out.animating);
+    assert_line(d.feed(UiInput::StepCCW), TIME_LINE);
+    TEST_ASSERT_FALSE(d.out.animating);
 }
 
 static void test_identical_pairs_share_one_slot(void) {
@@ -216,7 +172,7 @@ static void test_identical_pairs_share_one_slot(void) {
     // All six changing digits are the same '1'->'2' pair -> one shared slot.
     assert_line(d.idle_us(40000), "    \x01\x01:\x01\x01:\x01\x01    ");
     uint8_t expect[5];
-    ui_roll_composite('1', ' ', 1, true, UI_ROLL_STEPS, expect);
+    ui_roll_composite('1', ' ', 1, expect);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
     // Slot 2 was never needed -> still carries its default bar glyph.
     TEST_ASSERT_EQUAL_UINT8_ARRAY(UI_GLYPHS[1].cols, d.out.glyphs[2], 5);
@@ -224,38 +180,25 @@ static void test_identical_pairs_share_one_slot(void) {
     assert_line(d.out, "    22:22:22    ");
 }
 
-static void test_ccw_page_change_rolls_downward(void) {
-    FsmDriver d;
-    d.idle();
-    assert_line(d.feed(UiInput::StepCCW), TIME_LINE);  // wraps to PRESSURE
-    d.idle_us(40000, 2);  // k = 2: exit phase, first non-blank cell is '1'
-    TEST_ASSERT_EQUAL_CHAR('\x01', d.out.line[4]);
-    uint8_t expect[5];
-    ui_roll_composite('1', ' ', 2, false, UI_PAGE_ROLL_STEPS, expect);  // down
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
-    d.settle();
-    assert_line(d.out, PRESSURE_LINE);
-}
-
 // ---- interaction with input and overlays ----
 
 static void test_input_mid_roll_snaps_then_processes(void) {
     FsmDriver d;
     d.idle();
-    d.feed(UiInput::StepCW);   // TIME -> DATE wave
-    d.idle_us(40000, 3);       // mid-flight
-    // The step snaps the wave and starts the next one from a clean DATE.
+    d.snap.tm_now.tm_sec = 37;
+    d.idle_us(40000, 3);  // TIME roll mid-flight
+    TEST_ASSERT_TRUE(d.out.animating);
+    // The step snaps the roll and lands directly on the next page.
     assert_line(d.feed(UiInput::StepCW), DATE_LINE);
-    d.settle();
-    assert_line(d.out, INDOOR_LINE);
+    TEST_ASSERT_FALSE(d.out.animating);
 }
 
 static void test_btndown_mid_roll_cancels_before_hold_bar(void) {
     FsmDriver d;
     d.idle();
-    d.feed(UiInput::StepCW);
-    d.idle_us(40000);
-    assert_line(d.feed(UiInput::BtnDown), DATE_LINE);  // snapped, no overlay yet
+    d.snap.tm_now.tm_sec = 37;
+    d.idle_us(40000, 3);  // TIME roll mid-flight
+    assert_line(d.feed(UiInput::BtnDown), "    14:25:37    ");  // snapped
     TEST_ASSERT_FALSE(d.out.animating);
     assert_line(d.idle(5), "MENU     [     ]");  // bar at 500 ms
     TEST_ASSERT_TRUE(d.out.animating);           // hold bar animates the fill
@@ -284,28 +227,24 @@ static void test_menu_exit_snaps_to_pages(void) {
     TEST_ASSERT_FALSE(d.out.animating);
 }
 
-static void test_msg_jump_to_custom_rolls(void) {
+static void test_msg_jump_to_custom_snaps(void) {
     FsmDriver d;
     assert_line(d.idle(), TIME_LINE);
     strcpy(d.snap.msg, "HI");
     d.snap.msg_seq++;
-    assert_line(d.idle(), TIME_LINE);  // trigger frame: old page
-    TEST_ASSERT_TRUE(d.out.animating);
-    d.settle();
-    assert_line(d.out, CUSTOM_LINE);
+    assert_line(d.idle(), CUSTOM_LINE);  // page change: no animation
+    TEST_ASSERT_FALSE(d.out.animating);
 }
 
-static void test_custom_auto_advance_rolls(void) {
+static void test_custom_auto_advance_snaps(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     d.idle();
-    for (int i = 0; i < 4; i++) step_settled(d, UiInput::StepCW);
+    for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);
     assert_line(d.out, CUSTOM_LINE);
     d.snap.msg[0] = '\0';  // cleared via the API mid-display
-    assert_line(d.idle(), CUSTOM_LINE);  // trigger frame: old content
-    TEST_ASSERT_TRUE(d.out.animating);
-    d.settle();
-    assert_line(d.out, PRESSURE_LINE);
+    assert_line(d.idle(), PRESSURE_LINE);  // page change: no animation
+    TEST_ASSERT_FALSE(d.out.animating);
 }
 
 int main(int, char**) {
@@ -314,21 +253,18 @@ int main(int, char**) {
     RUN_TEST(test_font_out_of_range_is_space);
     RUN_TEST(test_font_spot_checks);
     RUN_TEST(test_composite_endpoints_are_pure_glyphs);
-    RUN_TEST(test_composite_upward_mid_frames);
-    RUN_TEST(test_composite_downward_mid_frame);
-    RUN_TEST(test_composite_page_roll_gap_never_mixes_glyphs);
+    RUN_TEST(test_composite_mid_frames);
     RUN_TEST(test_idle_tick_carries_default_glyphs);
     RUN_TEST(test_time_second_roll_timeline);
     RUN_TEST(test_minute_rollover_rolls_cells_in_lockstep);
     RUN_TEST(test_over_budget_lockstep_flips_excess_at_midpoint);
-    RUN_TEST(test_page_change_rolls_whole_line_through_blank);
+    RUN_TEST(test_page_change_snaps_instantly);
     RUN_TEST(test_identical_pairs_share_one_slot);
-    RUN_TEST(test_ccw_page_change_rolls_downward);
     RUN_TEST(test_input_mid_roll_snaps_then_processes);
     RUN_TEST(test_btndown_mid_roll_cancels_before_hold_bar);
     RUN_TEST(test_portal_banner_suppresses_roll);
     RUN_TEST(test_menu_exit_snaps_to_pages);
-    RUN_TEST(test_msg_jump_to_custom_rolls);
-    RUN_TEST(test_custom_auto_advance_rolls);
+    RUN_TEST(test_msg_jump_to_custom_snaps);
+    RUN_TEST(test_custom_auto_advance_snaps);
     return UNITY_END();
 }
