@@ -29,31 +29,40 @@ static uint32_t s_backoff_ms = 1000;
 
 // Polls the producers on a 1 s tick: sensors every 10 s; weather every
 // 15 min once Connected and lat/lon are set, retrying after 2 min on
-// failure (max 3 retries, then wait for the next 15-min slot).
+// failure (max 3 retries per 15-min slot). Countdown waits, not tick-count
+// deadlines: immune to counter wrap by construction. Each wait is assigned
+// >= 1 whenever it reaches 0, so the unconditional decrements never underflow.
 static void worker_task(void*) {
-    uint32_t tick = 0;
-    uint32_t weather_due = 0;
+    uint32_t sensors_wait_s = 0;
+    uint32_t weather_wait_s = 0;
     uint8_t weather_retries = 0;
     while (1) {
-        if (tick % 10 == 0) sensors_read();
+        if (sensors_wait_s == 0) {
+            sensors_read();
+            sensors_wait_s = 10;
+        }
 
-        if (tick >= weather_due) {
+        if (weather_wait_s == 0) {
             Settings st = settings_get();
             if (s_state != NetState::Connected || !st.lat[0] || !st.lon[0]) {
-                weather_due = tick + 1;  // not ready; re-check next tick
+                weather_wait_s = 1;  // not ready; re-check next tick
             } else if (weather_fetch(st.lat, st.lon)) {
-                weather_due = tick + 900;
+                weather_wait_s = 900;
                 weather_retries = 0;
             } else if (++weather_retries <= 3) {
-                weather_due = tick + 120;
+                weather_wait_s = 120;
             } else {
-                weather_due = tick + 900;
+                // Give up on this slot. The retries consumed 6 min of it;
+                // wait out the remainder so the 15-min cadence holds instead
+                // of drifting by the retry time after every failed slot.
+                weather_wait_s = 900 - 3 * 120;
                 weather_retries = 0;
             }
         }
 
         vTaskDelay(pdMS_TO_TICKS(1000));
-        tick++;
+        sensors_wait_s--;
+        weather_wait_s--;
     }
 }
 
