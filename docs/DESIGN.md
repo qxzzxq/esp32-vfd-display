@@ -59,20 +59,21 @@ own their data and expose copy-out getters — no global state struct, no cross-
   (copy-out `web_get_message()`).
 - **`ui.{h,cpp}`** — thin platform shell: owns the `VFDDisplay` instance and the encoder
   loop, builds the per-tick `UiSnapshot` from the producer modules, draws the line the
-  core returns, and executes the returned `UiEffect`s. `ui_run()` never returns.
+  core returns (uploading changed CGRAM glyphs first, against a per-slot cache), and
+  executes the returned `UiEffect`s. `ui_run()` never returns.
 - **`ui/` (pure UI core)** — host-testable UI logic: `UiFsm` (Pages/Menu/Edit modes,
-  click vs long-press recognition, menu timeout, overlay priority) plus the `UiPage` /
-  `MenuItem` interfaces and their concrete singletons. Libc includes only — no
-  ESP-IDF/FreeRTOS/project headers. Consumes a per-tick `UiSnapshot` built by the shell,
-  returns the 16-char line + `UiEffect` list.
+  click vs long-press recognition, menu timeout, overlay priority, roll animations) plus
+  the `UiPage` / `MenuItem` interfaces and their concrete singletons. Libc includes only —
+  no ESP-IDF/FreeRTOS/project headers. Consumes a per-tick `UiSnapshot` built by the
+  shell, returns the 16-char line + desired CGRAM contents per slot + `UiEffect` list.
 - **`main.cpp`** — boot: `nvs_flash_init` → `settings_init` → boot-hold check on GPIO20
   (3 s low → force portal) → `encoder_init` → `sensors_init` → `net_init(force)` → `ui_run()`.
 
 ## Task / concurrency model
 
-- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms)`; event → input
-  handling, timeout → re-render (clock seconds, edit-mode blink, marquee, auto-cycle).
-  Only this task touches the VFD.
+- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms — 40 ms while a roll
+  or the hold bar animates)`; event → input handling, timeout → re-render (clock seconds,
+  edit-mode blink, marquee, auto-cycle). Only this task touches the VFD.
 - **Worker task** (in `net.cpp`, prio 3, 8 KB stack — the in-task TLS handshake of
   `weather_fetch` peaks ~5 KB): 1 s loop; sensors every 10 s;
   weather every 15 min when Connected and lat/lon set (retry after 2 min on failure,
@@ -99,10 +100,34 @@ VFD symbols missing from this tube's CGROM:
 | 0x01–0x04 | progress-bar cell, code = lit columns (1–4) |
 | 0x7F | full bar cell (CGROM solid block — no slot spent) |
 | 0x05 | solid right arrow (menu cursor) |
-| 0x06–0x07 | free (reserved for the roll animations) |
+| 0x06–0x07 | unassigned when idle |
+
+The core emits the desired contents of all 7 slots in every `UiOutput`; the shell
+diff-uploads against a per-slot cache (first tick populates CGRAM, later ticks only send
+changes). During a roll animation the core freely overwrites any of the 7 slots with
+per-frame composites — the diff-upload restores the bar/arrow patterns afterwards.
 
 In this document's screen mockups, `>` stands for the arrow glyph and `=` for bar-fill
 blocks.
+
+**Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll state in `UiFsm`): vertical
+split-flap roll — a cell's old glyph exits through the top while the new one enters from
+below (one blank gap row between them), 8 steps × 40 ms ≈ 320 ms per cell, composited
+into CGRAM from an embedded 5×7 font (full printable ASCII; shapes match the CGROM so
+the hand-off at the roll's end is seamless — patch `font5x7.cpp` by eye if a glyph pops).
+
+- **TIME page**: any content change rolls its changed cells in lockstep (seconds tick,
+  minute/hour rollovers; `UiPage::rolls_on_change()` opt-in — other pages and the CUSTOM
+  marquee deliberately don't animate on content change).
+- **Page changes** (rotation, CUSTOM msg-jump, availability auto-advance, auto-cycle):
+  changed cells roll as a left-to-right wave, one cell starting per 50 ms. CW/automatic
+  changes roll upward, CCW rolls downward (the drum follows the knob). The stagger caps
+  concurrent mid-roll cells at ceil(7×40/50) = 6 of the 7 slots; lockstep rolls with more
+  than 7 changed cells (only the 24H format flip in practice) snap the excess cells.
+- **Interactions**: any input snaps the roll to its target before it is processed; the
+  hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
+  (returning to the pages snaps). The roll target is recomputed live each tick, so a
+  second flipping mid-wave retargets in flight.
 
 **Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
 pauses auto-cycle for 30 s):
@@ -269,8 +294,9 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   cleared.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
-  vertical-roll animations (TIME digits + page changes). *Verify:* overnight soak —
-  no reboots, clock correct, heap stable (via /api/status).
+  vertical-roll animations (TIME digits + page changes — done, v0.10.0; see
+  "Animations"). *Verify:* overnight soak — no reboots, clock correct, heap stable
+  (via /api/status).
 
 ## Open questions / risks
 
