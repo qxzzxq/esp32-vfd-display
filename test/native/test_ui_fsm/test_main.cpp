@@ -106,6 +106,45 @@ static void test_auto_advance_skips_consecutive_unavailable(void) {
     assert_line(d.idle(), TIME_LINE);
 }
 
+// A new POST bumps msg_seq; the display jumps to CUSTOM so the pushed
+// message actually shows (notification semantics).
+static void test_new_message_jumps_to_custom(void) {
+    FsmDriver d;
+    assert_line(d.idle(), TIME_LINE);
+    strcpy(d.snap.msg, "HI");
+    d.snap.msg_seq++;  // POST arrived
+    assert_line(d.idle(), CUSTOM_LINE);
+    assert_no_effects(d.out);
+}
+
+static void test_same_seq_does_not_rejump(void) {
+    FsmDriver d;
+    strcpy(d.snap.msg, "HI");
+    d.snap.msg_seq++;
+    d.idle();  // jumped to CUSTOM
+    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);  // rotate away
+    assert_line(d.idle(), PRESSURE_LINE);  // stays put: no new POST
+}
+
+static void test_clearing_post_does_not_jump(void) {
+    FsmDriver d;
+    assert_line(d.idle(), TIME_LINE);
+    d.snap.msg_seq++;  // POST of "" — seq bumps but msg stays empty
+    assert_line(d.idle(), TIME_LINE);
+}
+
+static void test_new_message_does_not_interrupt_menu(void) {
+    FsmDriver d;
+    enter_menu(d);
+    strcpy(d.snap.msg, "HI");
+    d.snap.msg_seq++;
+    assert_line(d.idle(), MENU_BRIGHT);  // menu unaffected
+    // The seq is consumed while in the menu: exiting later does not jump.
+    d.feed(UiInput::StepCCW);  // EXIT
+    d.click();
+    assert_line(d.idle(), TIME_LINE);
+}
+
 static void test_click_on_pages_is_unassigned(void) {
     FsmDriver d;
     d.idle();
@@ -279,6 +318,10 @@ int main(int, char**) {
     RUN_TEST(test_step_cycles_six_pages_with_message);
     RUN_TEST(test_custom_cleared_mid_display_auto_advances);
     RUN_TEST(test_auto_advance_skips_consecutive_unavailable);
+    RUN_TEST(test_new_message_jumps_to_custom);
+    RUN_TEST(test_same_seq_does_not_rejump);
+    RUN_TEST(test_clearing_post_does_not_jump);
+    RUN_TEST(test_new_message_does_not_interrupt_menu);
     RUN_TEST(test_click_on_pages_is_unassigned);
     RUN_TEST(test_hold_bar_timeline_and_menu_entry);
     RUN_TEST(test_release_after_fire_is_swallowed);

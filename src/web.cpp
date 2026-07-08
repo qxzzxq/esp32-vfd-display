@@ -206,12 +206,15 @@ static httpd_handle_t s_api = nullptr;
 // pushed notification) and free of NVS wear. 64 chars + NUL per the API
 // contract; written by the httpd task, read by the UI task per tick.
 static char s_msg[65] = "";
+static uint32_t s_msg_seq = 0;
 static portMUX_TYPE s_msg_lock = portMUX_INITIALIZER_UNLOCKED;
 
-void web_get_message(char out[65]) {
+uint32_t web_get_message(char out[65]) {
     taskENTER_CRITICAL(&s_msg_lock);
     strcpy(out, s_msg);
+    uint32_t seq = s_msg_seq;
     taskEXIT_CRITICAL(&s_msg_lock);
+    return seq;
 }
 
 // JSON error response. Returns ESP_FAIL so httpd closes the connection,
@@ -256,7 +259,20 @@ static esp_err_t msg_post_handler(httpd_req_t* req) {
     }
     body[len] = '\0';
 
-    cJSON* root = cJSON_Parse(body);
+    // cJSON decodes a backslash-u-0000 escape into an embedded NUL the strlen-based checks
+    // below cannot see (the text would silently truncate); reject it in the
+    // raw body. The walk is escape-aware so a literal backslash followed by
+    // "u0000" (JSON "\\u0000") still passes.
+    for (const char* p = body; *p; p++) {
+        if (*p != '\\') continue;
+        if (p[1] == 'u' && strncmp(p + 2, "0000", 4) == 0)
+            return json_error(req, "400 Bad Request", "text must be printable ASCII");
+        if (p[1]) p++;  // skip the escaped char so "\\\\" is not an escape prefix
+    }
+
+    // require_null_terminated: trailing garbage after the JSON value
+    // ("{...}extra") must 400, not silently parse the prefix.
+    cJSON* root = cJSON_ParseWithOpts(body, nullptr, true);
     if (!root) return json_error(req, "400 Bad Request", "invalid JSON");
     cJSON* text = cJSON_GetObjectItem(root, "text");
     if (!cJSON_IsString(text)) {
@@ -280,6 +296,7 @@ static esp_err_t msg_post_handler(httpd_req_t* req) {
 
     taskENTER_CRITICAL(&s_msg_lock);
     strlcpy(s_msg, text->valuestring, sizeof(s_msg));  // empty string clears
+    s_msg_seq++;
     taskEXIT_CRITICAL(&s_msg_lock);
     cJSON_Delete(root);
     ESP_LOGI(TAG, "message set (%d chars)", (int)n);
@@ -318,7 +335,12 @@ static esp_err_t status_get_handler(httpd_req_t* req) {
         if (in) {
             add_num1(in, "t", tC);
             add_num1(in, "rh", rh);
-            add_num1(in, "p", hPa);  // NAN → null when the BMP280 is absent
+            // hPa is NAN without a BMP280; cJSON's number bookkeeping does a
+            // double→int conversion that is UB on NAN, so branch explicitly.
+            if (isnan(hPa))
+                cJSON_AddNullToObject(in, "p");
+            else
+                add_num1(in, "p", hPa);
         }
     } else {
         cJSON_AddNullToObject(root, "indoor");

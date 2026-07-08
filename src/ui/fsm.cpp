@@ -7,6 +7,8 @@
 
 #include <stdio.h>
 
+#include "pages.h"
+
 void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out) {
     out->line[0] = '\0';
     out->hold_fired = false;
@@ -37,6 +39,15 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
     } else if (mode_ != Mode::Pages && now_us - last_input_us_ > UI_MENU_TIMEOUT_US) {
         // Inactivity: abandon the menu (and any uncommitted edit)
         abort_to_pages(view, *out);
+    }
+
+    // A new POST jumps the display to CUSTOM so the pushed message shows
+    // (notification semantics). Only from the pages — the menu is never
+    // interrupted, and the seq is consumed there so exiting the menu later
+    // doesn't trigger a stale jump. A clearing POST (empty msg) never jumps.
+    if (view.msg_seq != last_msg_seq_) {
+        last_msg_seq_ = view.msg_seq;
+        if (mode_ == Mode::Pages && view.msg[0] != '\0') page_ = UI_PAGE_CUSTOM;
     }
 
     // A page can lose availability while displayed (CUSTOM cleared via

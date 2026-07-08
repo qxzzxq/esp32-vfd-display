@@ -52,6 +52,7 @@ class UiFsm {
     uint8_t item_ = 0;
     int64_t last_input_us_ = 0;   // drives the menu inactivity timeout
     int64_t press_start_us_ = -1; // -1 = button idle (or release swallowed)
+    uint32_t last_msg_seq_ = 0;   // detects new POSTs (jump to CUSTOM)
 };
 
 #endif

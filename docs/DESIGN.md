@@ -96,7 +96,7 @@ pauses auto-cycle for 30 s):
 | 2 | DATE     | ` SAT 2026-07-05 `   | ` NO TIME SYNC   ` |
 | 3 | INDOOR   | `IN  23.4C   47% `   | `IN  SENSOR ERR  ` |
 | 4 | OUTDOOR  | `OUT 31C 60% UV9 `   | `OUT NO DATA` / `SET LOCATION` if lat/lon empty; `?` suffix if >45 min old |
-| 5 | CUSTOM   | POST'd text; ≤16 ch centered; >16 ch → marquee, 1 char / 300 ms, wraps through a 3-space gap | skipped in rotation when empty; auto-advances if cleared while shown |
+| 5 | CUSTOM   | POST'd text; ≤16 ch centered; >16 ch → marquee, 1 char / 300 ms, wraps through a 3-space gap | skipped in rotation when empty; auto-advances if cleared while shown; a non-empty POST jumps the display here (never interrupts the menu) |
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
@@ -128,8 +128,9 @@ No auth — trusted LAN, accepted risk (a static-token header check is a small a
 - `POST /api/message` — body `{"text":"PIZZA AT 7PM"}`. Validation: `text` required,
   string, ≤64 chars, printable ASCII 0x20–0x7E. Empty string clears the page. Held in
   RAM only (owned by `web`) — cleared on reboot, replaced by next POST; deliberately
-  not persisted (ephemeral by nature, avoids NVS wear). Responses: `200 {"ok":true}`,
-  `400 {"error":"..."}`, `413` if body >256 B.
+  not persisted (ephemeral by nature, avoids NVS wear). A non-empty POST switches the
+  display to the CUSTOM page (notification semantics; the menu is never interrupted).
+  Responses: `200 {"ok":true}`, `400 {"error":"..."}`, `413` if body >256 B.
 - `GET /api/message` — `{"text":"..."}`.
 - `GET /api/status` — `{"time":"2026-07-05T14:25:36","synced":true,`
   `"indoor":{"t":23.4,"rh":47.0,"p":1013.2},`

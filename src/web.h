@@ -1,6 +1,8 @@
 #ifndef web_h
 #define web_h
 
+#include <stdint.h>
+
 // Captive provisioning portal (AP mode): form at /, POST /save persists to
 // settings and reboots, any other GET 302-redirects to the form (catches
 // captive-portal probes). Also starts the DNS hijack task answering every
@@ -14,6 +16,8 @@ void web_start_api();
 
 // Copy-out getter for the custom message (owned by this module, RAM-only —
 // deliberately not persisted: it is ephemeral and NVS wear is avoided).
-void web_get_message(char out[65]);
+// Returns a sequence number that bumps on every accepted POST; the UI uses
+// a change to jump the display to the CUSTOM page.
+uint32_t web_get_message(char out[65]);
 
 #endif

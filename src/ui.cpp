@@ -70,7 +70,7 @@ static UiSnapshot build_snapshot() {
     s.use24h = st.use24h != 0;
     s.tz_idx = st.tz_idx;
     s.cycle_s = st.cycle_s;
-    web_get_message(s.msg);
+    s.msg_seq = web_get_message(s.msg);
     return s;
 }
 

@@ -47,6 +47,8 @@ struct UiSnapshot {
     uint8_t tz_idx;     // M7 TZ item
     uint8_t cycle_s;    // M7 auto-cycle
     char msg[65];       // CUSTOM page text (POST /api/message)
+    uint32_t msg_seq;   // bumps on every accepted POST; a change with a
+                        // non-empty msg jumps the display to CUSTOM
 };
 
 // Side effect requested by the core, executed by the shell after the draw.
