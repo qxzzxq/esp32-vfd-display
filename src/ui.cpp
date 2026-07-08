@@ -13,6 +13,7 @@
 #include "sensors.h"
 #include "settings.h"
 #include "ui/fsm.h"
+#include "ui/glyphs.h"
 #include "ui/menu_items.h"
 #include "ui/pages.h"
 #include "weather.h"
@@ -95,6 +96,10 @@ void ui_run() {
     s_vfd.init();
     s_vfd.clear();
     s_vfd.setBrightness(settings_get().bright);
+    // Controller reset cleared CGRAM; load the bar/arrow glyphs the core
+    // embeds in its lines (see src/ui/glyphs.h for the slot contract).
+    for (int i = 0; i < UI_GLYPH_COUNT; i++)
+        s_vfd.setCustomChar(UI_GLYPHS[i].slot, UI_GLYPHS[i].cols);
 
     uint8_t page_count = 0, item_count = 0;
     UiPage* const* pages = ui_pages(&page_count);
