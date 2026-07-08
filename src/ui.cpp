@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <string.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include "VFDDisplay.h"
@@ -111,9 +112,25 @@ void ui_run() {
     uint8_t cgram_valid = 0;  // bitmask by slot
 
     while (1) {
+        // While idle, wake at the next whole second instead of on a blind
+        // UI_TICK_MS grid, so a seconds change on the TIME page is noticed on
+        // the beat and its roll starts within one FreeRTOS tick of the second
+        // (not up to UI_TICK_MS late, which jitters second to second). Capped
+        // at UI_TICK_MS so sensors/net/menu-timeout still get serviced, and
+        // floored at one tick so we never busy-spin just before the boundary.
+        uint32_t wait_ms;
+        if (out.animating) {
+            wait_ms = UI_TICK_ANIM_MS;
+        } else {
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            uint32_t to_next_ms = (uint32_t)((1000000 - tv.tv_usec) / 1000);
+            wait_ms = to_next_ms < UI_TICK_MS ? to_next_ms : UI_TICK_MS;
+            if (wait_ms < portTICK_PERIOD_MS) wait_ms = portTICK_PERIOD_MS;
+        }
+
         EncEvent ev;
-        bool got = encoder_wait(
-            &ev, pdMS_TO_TICKS(out.animating ? UI_TICK_ANIM_MS : UI_TICK_MS));
+        bool got = encoder_wait(&ev, pdMS_TO_TICKS(wait_ms));
         int64_t now_us = esp_timer_get_time();
 
         UiInput in = UiInput::None;

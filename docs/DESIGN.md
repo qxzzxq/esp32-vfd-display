@@ -71,9 +71,12 @@ own their data and expose copy-out getters — no global state struct, no cross-
 
 ## Task / concurrency model
 
-- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms — 30 ms while a roll
-  or the hold bar animates)`; event → input handling, timeout → re-render (clock seconds,
-  edit-mode blink, marquee, auto-cycle). Only this task touches the VFD.
+- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, idle — 30 ms while a roll or
+  the hold bar animates)`; event → input handling, timeout → re-render (clock seconds,
+  edit-mode blink, marquee, auto-cycle). The idle wait is normally 100 ms but is shortened
+  to land on the next whole second, so the TIME roll starts on the beat rather than up to
+  100 ms late (aligned via `gettimeofday`, floored at one FreeRTOS tick). Only this task
+  touches the VFD.
 - **Worker task** (in `net.cpp`, prio 3, 8 KB stack — the in-task TLS handshake of
   `weather_fetch` peaks ~5 KB): 1 s loop; sensors every 10 s;
   weather every 15 min when Connected and lat/lon set (retry after 2 min on failure,
