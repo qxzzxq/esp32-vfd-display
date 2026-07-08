@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 
+#include "glyphs.h"
 #include "pages.h"
 
 void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out) {
@@ -63,7 +64,7 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
 
     // Long-press fires while still held: from the pages it opens the menu,
     // from the menu it escapes. render() has just drawn the completed bar
-    // (filled clamps at 9); hold_fired tells the shell to pause ~200 ms so it
+    // (the fill clamps at full); hold_fired tells the shell to pause ~200 ms so it
     // registers before acting on the new mode. The eventual release is
     // swallowed via press_start_us_ = -1.
     if (press_start_us_ >= 0 && now_us - press_start_us_ >= UI_LONG_PRESS_US) {
@@ -134,12 +135,18 @@ void UiFsm::render(char line[17], int64_t now_us, const UiSnapshot& s) const {
 }
 
 void UiFsm::render_hold_bar(char line[17], int64_t held_us) const {
-    // Hold progress bar (pages: enter menu; menu: exit), full at the threshold
-    int filled = (int)((held_us - UI_HOLD_SHOW_US) * UI_HOLD_BAR_SEGS /
-                       (UI_LONG_PRESS_US - UI_HOLD_SHOW_US));
-    if (filled > UI_HOLD_BAR_SEGS) filled = UI_HOLD_BAR_SEGS;
+    // Hold progress bar (pages: enter menu; menu: exit), full at the
+    // threshold. Column-granular: 5 cells x 5 columns; partial cells use the
+    // CGRAM bar glyphs (code == lit columns), full cells the CGROM block.
+    int cols = (int)((held_us - UI_HOLD_SHOW_US) * (UI_HOLD_BAR_SEGS * 5) /
+                     (UI_LONG_PRESS_US - UI_HOLD_SHOW_US));
     char bar[UI_HOLD_BAR_SEGS + 1];
-    for (int i = 0; i < UI_HOLD_BAR_SEGS; i++) bar[i] = i < filled ? '=' : ' ';
+    for (int i = 0; i < UI_HOLD_BAR_SEGS; i++) {
+        int lit = cols - 5 * i;
+        if (lit < 0) lit = 0;
+        if (lit > 5) lit = 5;
+        bar[i] = lit == 0 ? ' ' : lit == 5 ? UI_GLYPH_BAR_FULL : (char)lit;
+    }
     bar[UI_HOLD_BAR_SEGS] = '\0';
     // Label on the left, bracketed bar flush with the right edge; the
     // computed pad keeps the full 16 chars written for any segment count.

@@ -81,10 +81,10 @@ struct UiOutput {
 // Gesture / timeout thresholds (see UiFsm).
 constexpr int64_t UI_MENU_TIMEOUT_US = 20 * 1000000LL;
 constexpr int64_t UI_LONG_PRESS_US = 1000 * 1000LL;
-// Show hold progress after this; clicks stay clean. The 500 ms fill window is
-// exactly UI_HOLD_BAR_SEGS segments x the 100 ms tick, so the bar advances
-// once per render — any other ratio beats against the tick and stalls some
-// segments for 2 ticks.
+// Show hold progress after this; clicks stay clean. The fill is column-
+// granular (UI_HOLD_BAR_SEGS cells x 5 columns over the 500 ms window): at
+// the idle 100 ms tick the bar advances one full cell per render; finer
+// render ticks reveal the partial-cell CGRAM glyphs in between.
 constexpr int64_t UI_HOLD_SHOW_US = 500 * 1000LL;
 constexpr int UI_HOLD_BAR_SEGS = 5;
 
