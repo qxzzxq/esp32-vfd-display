@@ -259,6 +259,12 @@ static esp_err_t msg_post_handler(httpd_req_t* req) {
     }
     body[len] = '\0';
 
+    // A raw NUL byte inside the body would end the C string early, hiding
+    // trailing bytes from the whole-body parse check below. Valid JSON
+    // never contains one (control chars must be escaped inside strings).
+    if (memchr(body, '\0', (size_t)len))
+        return json_error(req, "400 Bad Request", "invalid JSON");
+
     // cJSON decodes a backslash-u-0000 escape into an embedded NUL the strlen-based checks
     // below cannot see (the text would silently truncate); reject it in the
     // raw body. The walk is escape-aware so a literal backslash followed by
