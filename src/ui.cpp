@@ -13,7 +13,6 @@
 #include "sensors.h"
 #include "settings.h"
 #include "ui/fsm.h"
-#include "ui/glyphs.h"
 #include "ui/menu_items.h"
 #include "ui/pages.h"
 #include "weather.h"
@@ -29,7 +28,8 @@
 #define VFD_CLK GPIO_NUM_7
 #define VFD_DIN GPIO_NUM_21
 
-#define UI_TICK_MS 100  // render tick while idle
+#define UI_TICK_MS 100      // render tick while idle
+#define UI_TICK_ANIM_MS 40  // render tick while a roll / hold bar animates
 
 // System time is bogus (starts at 1970) until SNTP sets it (M4).
 #define MIN_VALID_EPOCH 1609459200  // 2021-01-01
@@ -96,20 +96,24 @@ void ui_run() {
     s_vfd.init();
     s_vfd.clear();
     s_vfd.setBrightness(settings_get().bright);
-    // Controller reset cleared CGRAM; load the bar/arrow glyphs the core
-    // embeds in its lines (see src/ui/glyphs.h for the slot contract).
-    for (int i = 0; i < UI_GLYPH_COUNT; i++)
-        s_vfd.setCustomChar(UI_GLYPHS[i].slot, UI_GLYPHS[i].cols);
 
     uint8_t page_count = 0, item_count = 0;
     UiPage* const* pages = ui_pages(&page_count);
     MenuItem* const* items = ui_menu_items(&item_count);
     UiFsm fsm(pages, page_count, items, item_count);
-    UiOutput out;
+    UiOutput out = {};
+
+    // Per-slot cache of what CGRAM currently holds. Invalid at boot
+    // (controller reset cleared CGRAM), so the first tick uploads the core's
+    // desired glyphs; afterwards only diffs go over SPI — which also restores
+    // the bar/arrow glyphs after a roll animation borrowed their slots.
+    uint8_t cgram[8][5];
+    uint8_t cgram_valid = 0;  // bitmask by slot
 
     while (1) {
         EncEvent ev;
-        bool got = encoder_wait(&ev, pdMS_TO_TICKS(UI_TICK_MS));
+        bool got = encoder_wait(
+            &ev, pdMS_TO_TICKS(out.animating ? UI_TICK_ANIM_MS : UI_TICK_MS));
         int64_t now_us = esp_timer_get_time();
 
         UiInput in = UiInput::None;
@@ -125,6 +129,15 @@ void ui_run() {
         UiSnapshot snap = build_snapshot();
         fsm.tick(in, now_us, snap, &out);
 
+        // CGRAM before DCRAM so a line never references a stale glyph.
+        for (int slot = 1; slot <= 7; slot++) {
+            if ((cgram_valid & (1u << slot)) &&
+                memcmp(cgram[slot], out.glyphs[slot], 5) == 0)
+                continue;
+            s_vfd.setCustomChar(slot, out.glyphs[slot]);
+            memcpy(cgram[slot], out.glyphs[slot], 5);
+            cgram_valid |= 1u << slot;
+        }
         s_vfd.writeString(0, out.line);
 
         // A long-press just fired and the completed hold bar was drawn; let it
