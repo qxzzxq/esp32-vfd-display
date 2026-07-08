@@ -99,11 +99,11 @@ constexpr int64_t UI_HOLD_SHOW_US = 500 * 1000LL;
 constexpr int UI_HOLD_BAR_SEGS = 5;
 
 // Vertical roll animation (split-flap): a cell travels its 7 rows plus one
-// blank gap row, one row per step. 40 ms/step = 320 ms per cell; wave rolls
-// (page changes) stagger each changed cell's start by 50 ms, which caps
-// concurrent mid-roll cells at ceil(7*40/50) = 6 — within the 7 CGRAM slots.
+// blank gap row, one row per step; 40 ms/step = 320 ms per roll. All changed
+// cells move in lockstep — cells with the same from->to pair share a CGRAM
+// slot, and when more than 7 distinct pairs roll at once the excess cells
+// flip at the midpoint instead (see UiFsm::apply_roll).
 constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel
 constexpr int64_t UI_ROLL_STEP_US = 40 * 1000LL;
-constexpr int64_t UI_WAVE_STAGGER_US = 50 * 1000LL;
 
 #endif

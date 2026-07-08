@@ -1,7 +1,8 @@
 // Roll-animation tests: the 5x7 font, the split-flap frame compositor, the
-// UiOutput glyph channel, and the FSM roll triggers (TIME lockstep roll,
-// page-change wave, snap-on-input, overlay suppression). Timelines advance
-// in the shell's 40 ms animation frames via FsmDriver::idle_us/settle.
+// UiOutput glyph channel, and the FSM roll triggers (all changed cells roll
+// in lockstep — TIME ticks and page changes alike — with slot sharing by
+// from->to pair, snap-on-input, overlay suppression). Timelines advance in
+// the shell's 40 ms animation frames via FsmDriver::idle_us/settle.
 #include <string.h>
 #include <unity.h>
 
@@ -140,45 +141,65 @@ static void test_minute_rollover_rolls_cells_in_lockstep(void) {
     assert_line(d.out, "    14:26:00    ");
 }
 
-static void test_over_budget_lockstep_snaps_excess_cells(void) {
-    // A 24H format flip changes 10 cells; only 7 CGRAM slots exist, so the
-    // three rightmost changed cells snap straight to the target.
+static void test_over_budget_lockstep_flips_excess_at_midpoint(void) {
+    // A 24H format flip changes 10 cells with 10 distinct from->to pairs;
+    // only 7 CGRAM slots exist, so the three rightmost changed cells hold
+    // their old chars and flip at the gap-crossing midpoint (k = 4).
     FsmDriver d;
     assert_line(d.idle(), TIME_LINE);
     d.snap.use24h = false;
     d.idle_us(40000);  // trigger
-    assert_line(d.idle_us(40000), "   \x01\x02\x03\x04\x05\x06\x07 PM   ");
+    assert_line(d.idle_us(40000), "   \x01\x02\x03\x04\x05\x06\x07" "36    ");
+    d.idle_us(40000, 3);  // k = 4
+    assert_line(d.out, "   \x01\x02\x03\x04\x05\x06\x07 PM   ");
     d.settle();
     assert_line(d.out, "   2:25:36 PM   ");
 }
 
-// ---- page-change wave ----
+// ---- page-change roll ----
 
-static void test_page_wave_staggers_left_to_right(void) {
+static void test_page_change_rolls_all_cells_together(void) {
     FsmDriver d;
     d.idle();
     // Trigger frame still shows the old page in full.
     assert_line(d.feed(UiInput::StepCW), TIME_LINE);
     TEST_ASSERT_TRUE(d.out.animating);
-    // 40 ms in: only the first changed cell (index 1) has started; later
-    // ordinals are still inside their 50 ms stagger.
-    assert_line(d.idle_us(40000), " \x01  14:25:36    ");
-    // Never more mid-roll cells than CGRAM slots, all the way to the end.
-    for (int i = 0; i < 64 && d.out.animating; i++) {
-        d.idle_us(40000);
-        int rolling = 0;
-        for (int j = 0; j < 16; j++)
-            if (d.out.line[j] >= 1 && d.out.line[j] <= 7) rolling++;
-        TEST_ASSERT_TRUE(rolling <= 7);
-    }
+    // 40 ms in every changed cell is mid-roll at once: TIME->DATE has 13
+    // distinct from->to pairs, so the leftmost 7 (indices 1-6 and 8) get
+    // slots and the rest hold their old chars until the midpoint.
+    assert_line(d.idle_us(40000), " \x01\x02\x03\x04\x05\x06" "2\x07:36    ");
+    d.idle_us(40000, 3);  // k = 4: the slotless cells flip to the target
+    assert_line(d.out, " \x01\x02\x03\x04\x05\x06" "2\x07-07-05 ");
+    d.settle();
     assert_line(d.out, DATE_LINE);
 }
 
-static void test_ccw_wave_rolls_downward(void) {
+static void test_identical_pairs_share_one_slot(void) {
+    FsmDriver d;
+    d.snap.tm_now.tm_hour = 11;
+    d.snap.tm_now.tm_min = 11;
+    d.snap.tm_now.tm_sec = 11;
+    assert_line(d.idle(), "    11:11:11    ");
+    d.snap.tm_now.tm_hour = 22;
+    d.snap.tm_now.tm_min = 22;
+    d.snap.tm_now.tm_sec = 22;
+    d.idle_us(40000);  // trigger
+    // All six changing digits are the same '1'->'2' pair -> one shared slot.
+    assert_line(d.idle_us(40000), "    \x01\x01:\x01\x01:\x01\x01    ");
+    uint8_t expect[5];
+    ui_roll_composite('1', '2', 1, true, expect);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(expect, d.out.glyphs[1], 5);
+    // Slot 2 was never needed -> still carries its default bar glyph.
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(UI_GLYPHS[1].cols, d.out.glyphs[2], 5);
+    d.settle();
+    assert_line(d.out, "    22:22:22    ");
+}
+
+static void test_ccw_page_change_rolls_downward(void) {
     FsmDriver d;
     d.idle();
     assert_line(d.feed(UiInput::StepCCW), TIME_LINE);  // wraps to PRESSURE
-    d.idle_us(40000, 2);  // first changed cell (index 0) at k=2
+    d.idle_us(40000, 2);  // k = 2
     TEST_ASSERT_EQUAL_CHAR('\x01', d.out.line[0]);
     uint8_t expect[5];
     ui_roll_composite(' ', 'P', 2, false, expect);  // downward
@@ -269,9 +290,10 @@ int main(int, char**) {
     RUN_TEST(test_idle_tick_carries_default_glyphs);
     RUN_TEST(test_time_second_roll_timeline);
     RUN_TEST(test_minute_rollover_rolls_cells_in_lockstep);
-    RUN_TEST(test_over_budget_lockstep_snaps_excess_cells);
-    RUN_TEST(test_page_wave_staggers_left_to_right);
-    RUN_TEST(test_ccw_wave_rolls_downward);
+    RUN_TEST(test_over_budget_lockstep_flips_excess_at_midpoint);
+    RUN_TEST(test_page_change_rolls_all_cells_together);
+    RUN_TEST(test_identical_pairs_share_one_slot);
+    RUN_TEST(test_ccw_page_change_rolls_downward);
     RUN_TEST(test_input_mid_roll_snaps_then_processes);
     RUN_TEST(test_btndown_mid_roll_cancels_before_hold_bar);
     RUN_TEST(test_portal_banner_suppresses_roll);

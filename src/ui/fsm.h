@@ -41,10 +41,10 @@ class UiFsm {
     void render(char line[17], int64_t now_us, const UiSnapshot& s) const;
     void render_hold_bar(char line[17], int64_t held_us) const;
     static void render_portal_banner(char line[17], int64_t now_us, const UiSnapshot& s);
-    // Roll animation: detect triggers (page change -> staggered wave; opted-in
-    // content change -> simultaneous roll), then composite the active roll
-    // into line/out->glyphs. Only called for un-overlaid Pages-mode frames;
-    // line holds the target content on entry.
+    // Roll animation: detect triggers (page change or opted-in content
+    // change — all changed cells roll in lockstep), then composite the
+    // active roll into line/out->glyphs. Only called for un-overlaid
+    // Pages-mode frames; line holds the target content on entry.
     void apply_roll(char line[17], int64_t now_us, UiOutput* out);
     static void default_glyphs(UiOutput* out);
 
@@ -64,7 +64,6 @@ class UiFsm {
     // live each tick, so mid-flight content changes just retarget.
     struct RollState {
         bool active = false;
-        bool wave = false;    // staggered left->right (page change) vs lockstep
         bool upward = true;
         int64_t start_us = 0;
         char from[17] = {};

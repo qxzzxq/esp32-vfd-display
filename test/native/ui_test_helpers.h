@@ -93,8 +93,8 @@ struct FsmDriver {
         return out;
     }
 
-    // Fine-step until the current animation finishes (bounded; a full 16-cell
-    // wave needs ~27 frames at 40 ms).
+    // Fine-step until the current animation finishes (bounded; a full roll
+    // is 9 frames at 40 ms).
     const UiOutput& settle(int max_ticks = 64) {
         for (int i = 0; i < max_ticks && out.animating; i++) idle_us(40000);
         return out;

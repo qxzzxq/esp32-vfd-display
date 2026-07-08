@@ -190,21 +190,19 @@ void UiFsm::default_glyphs(UiOutput* out) {
 }
 
 void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
-    // Trigger detection against the previous pages frame. A page change
-    // (rotation, msg-jump, availability auto-advance, future auto-cycle)
-    // starts a staggered wave; an opted-in same-page content change (TIME
-    // second tick) rolls its changed cells in lockstep.
+    // Trigger detection against the previous pages frame: a page change
+    // (rotation, msg-jump, availability auto-advance, future auto-cycle) or
+    // an opted-in same-page content change (TIME second tick). Either way
+    // all changed cells roll together in lockstep.
     if (prev_page_ != 0xFF) {
         if (page_ != prev_page_) {
             roll_.active = true;
-            roll_.wave = true;
             roll_.upward = dir_hint_ >= 0;
             roll_.start_us = now_us;
             memcpy(roll_.from, prev_content_, 17);
         } else if (!roll_.active && pages_[page_]->rolls_on_change() &&
                    strcmp(line, prev_content_) != 0) {
             roll_.active = true;
-            roll_.wave = false;
             roll_.upward = true;
             roll_.start_us = now_us;
             memcpy(roll_.from, prev_content_, 17);
@@ -215,30 +213,41 @@ void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
     memcpy(prev_content_, line, 17);  // always the logical target
     if (!roll_.active) return;
 
-    // Composite the in-flight cells over the target. Slots are reallocated
-    // left->right every frame (stateless; the shell diff-uploads changes).
-    // If more cells are mid-roll than slots — only reachable by lockstep
-    // rolls with > 7 diffs, e.g. a 24H format flip — the excess snaps.
     int64_t elapsed = now_us - roll_.start_us;
-    bool done = true;
-    int ordinal = 0;   // index among changed cells: fixes the wave schedule
-    int next_slot = 1;
+    int k = elapsed <= 0 ? 0 : (int)(elapsed / UI_ROLL_STEP_US);
+    if (k >= UI_ROLL_STEPS) {
+        roll_.active = false;  // line already holds the target
+        return;
+    }
+    // Composite the roll over the target. Cells with the same from->to pair
+    // share one CGRAM slot (equal k makes their composites identical); slots
+    // are reallocated left->right every frame (stateless; the shell
+    // diff-uploads changes). When more than 7 distinct pairs are mid-roll —
+    // busy page changes, the 24H format flip — the excess cells hold the old
+    // char and flip at the gap-crossing midpoint, coherent with the motion.
+    char pair_from[7], pair_to[7];
+    int pairs = 0;
     for (int i = 0; i < 16; i++) {
         if (roll_.from[i] == line[i]) continue;
-        int64_t cell_elapsed =
-            elapsed - (roll_.wave ? ordinal * UI_WAVE_STAGGER_US : 0);
-        ordinal++;
-        int k = cell_elapsed <= 0 ? 0 : (int)(cell_elapsed / UI_ROLL_STEP_US);
-        if (k >= UI_ROLL_STEPS) continue;  // this cell already shows the target
-        done = false;
         if (k == 0) {
-            line[i] = roll_.from[i];  // scheduled but not moving yet
-        } else if (next_slot <= 7) {
-            ui_roll_composite(roll_.from[i], line[i], k, roll_.upward,
-                              out->glyphs[next_slot]);
-            line[i] = (char)next_slot++;
+            line[i] = roll_.from[i];  // trigger frame: not moving yet
+            continue;
         }
-        // else: over budget — leave the target char (snap)
+        int p = 0;
+        while (p < pairs &&
+               !(pair_from[p] == roll_.from[i] && pair_to[p] == line[i]))
+            p++;
+        if (p == pairs) {
+            if (pairs == 7) {  // out of slots: coarse midpoint flip
+                if (k < UI_ROLL_STEPS / 2) line[i] = roll_.from[i];
+                continue;
+            }
+            pair_from[p] = roll_.from[i];
+            pair_to[p] = line[i];
+            ui_roll_composite(roll_.from[i], line[i], k, roll_.upward,
+                              out->glyphs[p + 1]);
+            pairs++;
+        }
+        line[i] = (char)(p + 1);
     }
-    if (done) roll_.active = false;
 }

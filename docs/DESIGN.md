@@ -116,18 +116,19 @@ below (one blank gap row between them), 8 steps × 40 ms ≈ 320 ms per cell, co
 into CGRAM from an embedded 5×7 font (full printable ASCII; shapes match the CGROM so
 the hand-off at the roll's end is seamless — patch `font5x7.cpp` by eye if a glyph pops).
 
-- **TIME page**: any content change rolls its changed cells in lockstep (seconds tick,
-  minute/hour rollovers; `UiPage::rolls_on_change()` opt-in — other pages and the CUSTOM
-  marquee deliberately don't animate on content change).
-- **Page changes** (rotation, CUSTOM msg-jump, availability auto-advance, auto-cycle):
-  changed cells roll as a left-to-right wave, one cell starting per 50 ms. CW/automatic
-  changes roll upward, CCW rolls downward (the drum follows the knob). The stagger caps
-  concurrent mid-roll cells at ceil(7×40/50) = 6 of the 7 slots; lockstep rolls with more
-  than 7 changed cells (only the 24H format flip in practice) snap the excess cells.
+- **Triggers**: TIME content changes (seconds tick, rollovers; `UiPage::rolls_on_change()`
+  opt-in — other pages and the CUSTOM marquee deliberately don't animate on content
+  change) and page changes (rotation, CUSTOM msg-jump, availability auto-advance,
+  auto-cycle). Either way **all changed cells roll together in lockstep** (~320 ms).
+  CW/automatic changes roll upward, CCW rolls downward (the drum follows the knob).
+- **Slot budget**: cells rolling the same old→new pair share one CGRAM slot (equal step ⇒
+  identical composite). When more than 7 distinct pairs are mid-roll at once (busy page
+  changes, the 24H format flip), the excess cells hold the old char and flip at the
+  gap-crossing midpoint — coarse, but coherent with the surrounding motion.
 - **Interactions**: any input snaps the roll to its target before it is processed; the
   hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
   (returning to the pages snaps). The roll target is recomputed live each tick, so a
-  second flipping mid-wave retargets in flight.
+  second flipping mid-roll retargets in flight.
 
 **Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
 pauses auto-cycle for 30 s):
