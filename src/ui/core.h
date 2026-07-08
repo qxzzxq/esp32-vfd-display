@@ -98,12 +98,16 @@ constexpr int64_t UI_LONG_PRESS_US = 1000 * 1000LL;
 constexpr int64_t UI_HOLD_SHOW_US = 500 * 1000LL;
 constexpr int UI_HOLD_BAR_SEGS = 5;
 
-// Vertical roll animation (split-flap): a cell travels its 7 rows plus one
-// blank gap row, one row per step; 40 ms/step = 320 ms per roll. All changed
-// cells move in lockstep — cells with the same from->to pair share a CGRAM
-// slot, and when more than 7 distinct pairs roll at once the excess cells
-// flip at the midpoint instead (see UiFsm::apply_roll).
-constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel
+// Vertical roll animation (split-flap), one row of travel per 40 ms step,
+// all cells in lockstep. Content rolls (TIME ticks) use a 1-row gap: 8 steps
+// = 320 ms, old and new glyph briefly share the cell, so CGRAM slots are
+// keyed by from->to pair. Page rolls use a 7-row gap: 14 steps = 560 ms, the
+// whole old line rolls fully out before the new line rolls in — each frame
+// then shows a single char per cell, so slots are keyed per character and 7
+// slots cover the whole 16-cell line (see UiFsm::apply_roll for the rare
+// overflow fallback).
+constexpr int UI_ROLL_STEPS = 8;        // content roll: 7 rows + 1 gap row
+constexpr int UI_PAGE_ROLL_STEPS = 14;  // page roll: 7 rows + 7 gap rows
 constexpr int64_t UI_ROLL_STEP_US = 40 * 1000LL;
 
 #endif

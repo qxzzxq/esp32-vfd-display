@@ -65,6 +65,7 @@ class UiFsm {
     struct RollState {
         bool active = false;
         bool upward = true;
+        int steps = UI_ROLL_STEPS;  // UI_PAGE_ROLL_STEPS for page changes
         int64_t start_us = 0;
         char from[17] = {};
     };

@@ -112,19 +112,24 @@ blocks.
 
 **Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll state in `UiFsm`): vertical
 split-flap roll — a cell's old glyph exits through the top while the new one enters from
-below (one blank gap row between them), 8 steps × 40 ms ≈ 320 ms per cell, composited
-into CGRAM from an embedded 5×7 font (full printable ASCII; shapes match the CGROM so
-the hand-off at the roll's end is seamless — patch `font5x7.cpp` by eye if a glyph pops).
+below, all cells in lockstep, one row per 40 ms step, composited into CGRAM from an
+embedded 5×7 font (full printable ASCII; shapes match the CGROM so the hand-off at the
+roll's end is seamless — patch `font5x7.cpp` by eye if a glyph pops).
 
-- **Triggers**: TIME content changes (seconds tick, rollovers; `UiPage::rolls_on_change()`
-  opt-in — other pages and the CUSTOM marquee deliberately don't animate on content
-  change) and page changes (rotation, CUSTOM msg-jump, availability auto-advance,
-  auto-cycle). Either way **all changed cells roll together in lockstep** (~320 ms).
-  CW/automatic changes roll upward, CCW rolls downward (the drum follows the knob).
-- **Slot budget**: cells rolling the same old→new pair share one CGRAM slot (equal step ⇒
-  identical composite). When more than 7 distinct pairs are mid-roll at once (busy page
-  changes, the 24H format flip), the excess cells hold the old char and flip at the
-  gap-crossing midpoint — coarse, but coherent with the surrounding motion.
+- **Content rolls** (TIME seconds tick / rollovers; `UiPage::rolls_on_change()` opt-in —
+  other pages and the CUSTOM marquee deliberately don't animate on content change):
+  changed cells roll with a 1-row gap, 8 steps ≈ 320 ms; old and new glyph briefly share
+  the cell, so CGRAM slots are keyed by old→new pair (identical pairs share, e.g. a
+  `11:11:11 → 22:22:22` rollover uses one slot for all six digits).
+- **Page rolls** (rotation, CUSTOM msg-jump, availability auto-advance, auto-cycle): the
+  **whole line** — every non-blank cell, including chars both pages share — rolls out
+  through a 7-row gap and the new line rolls in behind it, 14 steps ≈ 560 ms. The wide
+  gap means each frame shows a single character per cell, so slots are keyed per
+  character (repeats share) and 7 slots animate all 16 cells. CW/automatic changes roll
+  upward, CCW rolls downward (the drum follows the knob).
+- **Slot overflow** (a phase with > 7 distinct characters, or a content roll with > 7
+  distinct pairs — e.g. the 24H format flip): the excess cells hold the old char and
+  flip to the new at the midpoint, coherent with the surrounding motion.
 - **Interactions**: any input snaps the roll to its target before it is processed; the
   hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
   (returning to the pages snaps). The roll target is recomputed live each tick, so a

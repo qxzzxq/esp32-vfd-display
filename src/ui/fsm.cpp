@@ -196,14 +196,19 @@ void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
     // all changed cells roll together in lockstep.
     if (prev_page_ != 0xFF) {
         if (page_ != prev_page_) {
+            // Page roll: 7-row gap, so the whole old line rolls out before
+            // the new one rolls in — every frame shows one char per cell,
+            // which is what lets 7 CGRAM slots animate all 16 cells.
             roll_.active = true;
             roll_.upward = dir_hint_ >= 0;
+            roll_.steps = UI_PAGE_ROLL_STEPS;
             roll_.start_us = now_us;
             memcpy(roll_.from, prev_content_, 17);
         } else if (!roll_.active && pages_[page_]->rolls_on_change() &&
                    strcmp(line, prev_content_) != 0) {
             roll_.active = true;
             roll_.upward = true;
+            roll_.steps = UI_ROLL_STEPS;
             roll_.start_us = now_us;
             memcpy(roll_.from, prev_content_, 17);
         }
@@ -215,36 +220,48 @@ void UiFsm::apply_roll(char line[17], int64_t now_us, UiOutput* out) {
 
     int64_t elapsed = now_us - roll_.start_us;
     int k = elapsed <= 0 ? 0 : (int)(elapsed / UI_ROLL_STEP_US);
-    if (k >= UI_ROLL_STEPS) {
+    if (k >= roll_.steps) {
         roll_.active = false;  // line already holds the target
         return;
     }
-    // Composite the roll over the target. Cells with the same from->to pair
-    // share one CGRAM slot (equal k makes their composites identical); slots
-    // are reallocated left->right every frame (stateless; the shell
-    // diff-uploads changes). When more than 7 distinct pairs are mid-roll —
-    // busy page changes, the 24H format flip — the excess cells hold the old
-    // char and flip at the gap-crossing midpoint, coherent with the motion.
-    char pair_from[7], pair_to[7];
+    // Composite the roll over the target. Slots are keyed by the pair of
+    // *visible* chars — the from glyph is on screen only while k <= 6, the
+    // to glyph only once k >= steps - 6 — so cells exiting or entering the
+    // same char share one slot (their composites are identical at equal k).
+    // Slots are reallocated left->right every frame (stateless; the shell
+    // diff-uploads changes). If distinct keys ever exceed the 7 slots (a
+    // content roll with > 7 pairs, e.g. the 24H format flip, or a line with
+    // > 7 distinct chars in one page-roll phase), the excess cells hold the
+    // old char and flip to the new at the midpoint, coherent with the motion.
+    char key_from[7], key_to[7];
     int pairs = 0;
+    bool page_roll = roll_.steps == UI_PAGE_ROLL_STEPS;
     for (int i = 0; i < 16; i++) {
-        if (roll_.from[i] == line[i]) continue;
+        // Page rolls move every cell — even chars the two pages share —
+        // so the whole line visibly travels; content rolls move only the
+        // changed cells (a clock's unchanged digits must hold still).
+        if (roll_.from[i] == line[i] && !(page_roll && line[i] != ' '))
+            continue;
         if (k == 0) {
             line[i] = roll_.from[i];  // trigger frame: not moving yet
             continue;
         }
+        char ef = k <= 6 ? roll_.from[i] : ' ';
+        char et = k >= roll_.steps - 6 ? line[i] : ' ';
+        if (ef == ' ' && et == ' ') {
+            line[i] = ' ';  // both glyphs out of the window
+            continue;
+        }
         int p = 0;
-        while (p < pairs &&
-               !(pair_from[p] == roll_.from[i] && pair_to[p] == line[i]))
-            p++;
+        while (p < pairs && !(key_from[p] == ef && key_to[p] == et)) p++;
         if (p == pairs) {
             if (pairs == 7) {  // out of slots: coarse midpoint flip
-                if (k < UI_ROLL_STEPS / 2) line[i] = roll_.from[i];
+                if (k * 2 < roll_.steps) line[i] = roll_.from[i];
                 continue;
             }
-            pair_from[p] = roll_.from[i];
-            pair_to[p] = line[i];
-            ui_roll_composite(roll_.from[i], line[i], k, roll_.upward,
+            key_from[p] = ef;
+            key_to[p] = et;
+            ui_roll_composite(ef, et, k, roll_.upward, roll_.steps,
                               out->glyphs[p + 1]);
             pairs++;
         }
