@@ -110,13 +110,15 @@ constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel (geometry, not
 // of the 10 ms FreeRTOS tick so frames land evenly.
 constexpr int64_t UI_ROLL_STEP_US = 30 * 1000LL;
 
-// Dimming crossfade for page transitions, one half-period per phase. The
-// outgoing page dims saved-level -> 0 (Out), the DCRAM content swaps at black,
-// then the incoming page dims 0 -> saved-level (In). Driven by SetBrightness
-// effects at the 30 ms tick; touches no CGRAM, so unlike the roll it animates
-// a whole 16-cell page change (which is why the roll page-transition was
-// dropped). Out always completes; a page change mid-In restarts In from black
-// (see UiFsm::FadeState).
-constexpr int64_t UI_FADE_HALF_US = 100 * 1000LL;  // per direction; 0.2 s total
+// Dimming crossfade for screen transitions, one half-period per phase. The
+// outgoing screen dims saved-level -> 0 (Out), the line swaps at black, then
+// the incoming screen dims 0 -> saved-level (In). Driven by SetBrightness
+// effects; touches no CGRAM, so unlike the roll it animates a whole 16-cell
+// line (which is why the roll page-transition was dropped). Out always
+// completes; a screen change mid-In restarts In from black (see UiFsm::FadeState).
+// Must be a multiple of the shell's animation tick (src/ui.cpp UI_TICK_ANIM_MS)
+// so a frame lands exactly on the black midpoint — otherwise the content swap is
+// rendered while still visibly lit.
+constexpr int64_t UI_FADE_HALF_US = 90 * 1000LL;  // 3 * 30 ms tick; 0.18 s total
 
 #endif

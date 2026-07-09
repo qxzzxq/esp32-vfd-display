@@ -3,9 +3,9 @@
 // incoming page back in over another UI_FADE_HALF_US (In), restoring the saved
 // brightness. Out always completes; a page change mid-Out only retargets, while
 // one mid-In restarts In from black for the new page. Driven by SetBrightness
-// effects; yields to overlays (hold bar / portal / menu). The time-based fade
-// envelope is sampled here in 20 ms steps (dividing the 100 ms half evenly, so
-// a frame lands exactly on the dark midpoint) via FsmDriver::idle_us/settle.
+// effects; yields to overlays (hold bar / portal / menu). Sampled here in 30 ms
+// steps — the shell's real animation tick (UI_TICK_ANIM_MS) — which divides the
+// 90 ms half evenly, so a frame lands exactly on the dark midpoint on device.
 #include <string.h>
 #include <unity.h>
 
@@ -34,7 +34,7 @@ static int brightness(const UiOutput& out) {
 }
 
 // A step from TIME->DATE plays the full envelope: the outgoing page is held
-// through the dim-out half (4 frames strictly under 100 ms at 20 ms each), the
+// through the dim-out half (2 frames strictly under 90 ms at 30 ms each), the
 // incoming page appears at the dark midpoint and brightens through the dim-in
 // half, and the saved brightness (128) is restored on the settle frame that
 // also clears `animating`.
@@ -47,8 +47,8 @@ static void test_page_change_crossfade_timeline(void) {
     TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
     // Dim-out half: outgoing page held, brightness strictly falls.
     int prev = 128;
-    for (int i = 0; i < 4; i++) {  // 20, 40, 60, 80 ms
-        d.idle_us(20000);
+    for (int i = 0; i < 2; i++) {  // 30, 60 ms
+        d.idle_us(30000);
         assert_line(d.out, TIME_LINE);
         TEST_ASSERT_TRUE(d.out.animating);
         int b = brightness(d.out);
@@ -56,13 +56,13 @@ static void test_page_change_crossfade_timeline(void) {
         prev = b;
     }
     // Dark midpoint: the incoming page appears at brightness 0.
-    d.idle_us(20000);  // 100 ms
+    d.idle_us(30000);  // 90 ms
     assert_line(d.out, DATE_LINE);
     TEST_ASSERT_EQUAL_INT(0, brightness(d.out));
     // Dim-in half: incoming page shown, brightness strictly climbs.
     prev = 0;
-    for (int i = 0; i < 4; i++) {  // 120, 140, 160, 180 ms
-        d.idle_us(20000);
+    for (int i = 0; i < 2; i++) {  // 120, 150 ms
+        d.idle_us(30000);
         assert_line(d.out, DATE_LINE);
         TEST_ASSERT_TRUE(d.out.animating);
         int b = brightness(d.out);
@@ -70,7 +70,7 @@ static void test_page_change_crossfade_timeline(void) {
         prev = b;
     }
     // Settle frame: brightness restored to the saved level, animation over.
-    d.idle_us(20000);  // 200 ms
+    d.idle_us(30000);  // 180 ms
     assert_line(d.out, DATE_LINE);
     TEST_ASSERT_FALSE(d.out.animating);
     TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
@@ -85,10 +85,10 @@ static void test_content_swaps_at_dark_midpoint(void) {
     d.feed(UiInput::StepCW);  // TIME -> DATE
     // The last outgoing frame is dim; the swap to the incoming page lands at
     // the dark midpoint (brightness 0).
-    d.idle_us(20000, 4);      // 80 ms: last dim-out frame
+    d.idle_us(30000, 2);      // 60 ms: last dim-out frame
     assert_line(d.out, TIME_LINE);
     TEST_ASSERT_TRUE(brightness(d.out) > 0 && brightness(d.out) < 128);
-    d.idle_us(20000, 1);      // 100 ms: swap frame, incoming at black
+    d.idle_us(30000, 1);      // 90 ms: swap frame, incoming at black
     assert_line(d.out, DATE_LINE);
     TEST_ASSERT_EQUAL_INT(0, brightness(d.out));
 }
@@ -100,7 +100,7 @@ static void test_step_during_dim_out_retargets_not_restarts(void) {
     FsmDriver d;
     d.idle();                 // settled on TIME
     d.feed(UiInput::StepCW);  // TIME -> DATE: dim-out of TIME begins
-    d.idle_us(20000, 2);      // 40 ms into the dim-out
+    d.idle_us(30000, 1);      // 30 ms into the dim-out
     assert_line(d.out, TIME_LINE);
     int mid = brightness(d.out);
     TEST_ASSERT_TRUE(mid < 128 && mid > 0);
@@ -120,7 +120,7 @@ static void test_step_during_dim_in_restarts_from_black(void) {
     FsmDriver d;
     d.idle();
     d.feed(UiInput::StepCW);  // TIME -> DATE
-    d.idle_us(20000, 7);      // 140 ms: past dim-out, into DATE's dim-in
+    d.idle_us(30000, 4);      // 120 ms: past dim-out, into DATE's dim-in
     assert_line(d.out, DATE_LINE);
     TEST_ASSERT_TRUE(brightness(d.out) > 0);
     // Step during dim-in: INDOOR takes over from black.

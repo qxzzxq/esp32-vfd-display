@@ -254,6 +254,20 @@ static void test_exit_item_returns_to_pages(void) {
     TEST_ASSERT_FALSE(d.out.animating);
 }
 
+// A button edge snaps the menu-item crossfade to full brightness, so a click
+// acts on the item now shown (item_), never one still dimming in behind the
+// fade — the display can't lag the action.
+static void test_button_snaps_menu_item_fade(void) {
+    FsmDriver d;
+    enter_menu(d);
+    assert_line(d.feed(UiInput::StepCW), MENU_BRIGHT);  // rotate: fade shows outgoing BRIGHT
+    TEST_ASSERT_TRUE(d.out.animating);
+    // Button-down snaps to the incoming item at full brightness before any action.
+    assert_line(d.feed(UiInput::BtnDown), MENU_WIFI);
+    TEST_ASSERT_FALSE(d.out.animating);
+    assert_single_effect(d.out, UiEffect::Type::SetBrightness, 128);
+}
+
 static void test_bright_edit_commit_flow(void) {
     FsmDriver d;
     enter_menu(d);
@@ -371,6 +385,7 @@ int main(int, char**) {
     RUN_TEST(test_hold_bar_column_granular);
     RUN_TEST(test_menu_step_wraps);
     RUN_TEST(test_exit_item_returns_to_pages);
+    RUN_TEST(test_button_snaps_menu_item_fade);
     RUN_TEST(test_bright_edit_commit_flow);
     RUN_TEST(test_long_press_from_menu_exits_without_effects);
     RUN_TEST(test_long_press_from_edit_restores_brightness);

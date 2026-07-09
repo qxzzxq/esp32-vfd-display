@@ -28,6 +28,16 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
         // Any input snaps an in-flight roll to its target before dispatch,
         // so what the user acts on is what the display settles to.
         roll_.active = false;
+        // A button edge also snaps the crossfade to full brightness, so a click
+        // acts only on a fully-shown screen — never on a menu item still dimming
+        // in behind the fade — and entering BRIGHT edit finishes the fade before
+        // its live preview runs (else the fade's later SetBrightness wins).
+        // Rotary steps keep fading (apply_transition retargets/restarts them).
+        if ((in == UiInput::BtnDown || in == UiInput::BtnUp) &&
+            fade_.phase != FadeState::Phase::Idle) {
+            fade_.phase = FadeState::Phase::Idle;
+            out->emit(UiEffect::Type::SetBrightness, view.bright);
+        }
         last_input_us_ = now_us;
         switch (in) {
             case UiInput::StepCW: handle_step(1, view, *out); break;

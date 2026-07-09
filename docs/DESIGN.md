@@ -137,11 +137,14 @@ seamless — patch `font5x7.cpp` by eye if a glyph pops).
   (returning to the pages snaps). The roll target is recomputed live each tick, so a
   second flipping mid-roll retargets in flight.
 - **Screen-transition crossfade** (`UI_FADE_HALF_US`): every change of rendered *screen*
-  dims the outgoing screen to black over 100 ms via the driver's dimming register
+  dims the outgoing screen to black over 90 ms via the driver's dimming register
   (`setBrightness`, 240-level duty; 0 = 0/255 duty = fully dark), swaps the line at black,
-  then dims the incoming screen back to the saved brightness over another 100 ms. Driven by
+  then dims the incoming screen back to the saved brightness over another 90 ms. Driven by
   `SetBrightness` effects at the 30 ms tick and using **no CGRAM**, so unlike the roll it
-  animates a whole 16-cell line. A "screen" is the identity `UiFsm::screen_id` returns —
+  animates a whole 16-cell line. The half-period is a multiple of the 30 ms tick so a frame
+  lands exactly on the black midpoint (else the swap would render while faintly lit). A
+  button edge snaps an in-flight fade to full brightness, so a click always acts on a
+  fully-shown screen and BRIGHT's live preview isn't overridden by the fade. A "screen" is the identity `UiFsm::screen_id` returns —
   page number, menu item, the hold bar, or the portal banner — so it crossfades page steps,
   the CUSTOM jump/auto-advance, menu enter/exit, and menu item navigation, but *not*
   same-screen animated content (the hold-bar fill, portal banner alternation, marquee, or a
