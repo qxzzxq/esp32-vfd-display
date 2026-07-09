@@ -180,7 +180,7 @@ static void test_overlay_ends_fade_and_restores_brightness(void) {
     TEST_ASSERT_TRUE(brightness(d.out) < 128);
     d.feed(UiInput::BtnDown);
     d.idle(5);  // held 500 ms: the hold bar overlays the fade
-    assert_line(d.out, "MENU     [     ]");
+    assert_line(d.out, "MENU            ");
     TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
 }
 

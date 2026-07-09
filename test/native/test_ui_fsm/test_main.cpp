@@ -11,7 +11,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // Golden lines for make_snapshot() (24h, SAT 2026-07-05, bright 128 = 8).
-// \x05 is the CGRAM arrow cursor, \x7F the CGROM solid block (full bar cell),
+// \x05 is the CGRAM arrow cursor, \x06 the CGRAM solid block (full bar cell),
 // \x01..\x04 the partial bar cells (code == lit columns). Hex escapes are
 // greedy — a glyph code followed by a hex-digit-ish char needs adjacent-
 // literal concatenation ("\x05" "BRIGHT", not "\x05BRIGHT" == "\x5BRIGHT").
@@ -170,13 +170,13 @@ static void test_hold_bar_timeline_and_menu_entry(void) {
     d.feed(UiInput::BtnDown);
     // Clicks stay visually clean: no bar below 500 ms.
     assert_line(d.idle(4), TIME_LINE);  // held 400 ms
-    assert_line(d.idle(1), "MENU     [     ]");  // held 500 ms, bar appears empty
-    assert_line(d.idle(2), "MENU     [\x7F\x7F   ]");  // held 700 ms = 10 columns
-    assert_line(d.idle(2), "MENU     [\x7F\x7F\x7F\x7F ]");  // held 900 ms
+    assert_line(d.idle(1), "MENU            ");  // held 500 ms, bar appears empty
+    assert_line(d.idle(2), "MENU       \x06\x06   ");  // held 700 ms = 10 columns
+    assert_line(d.idle(2), "MENU       \x06\x06\x06\x06 ");  // held 900 ms
     // Threshold tick: completed bar is drawn, the fire is signalled for the
     // shell's 200 ms pause, and the menu is entered at item 0.
     d.idle(1);  // held 1.0 s
-    assert_line(d.out, "MENU     [\x7F\x7F\x7F\x7F\x7F]");
+    assert_line(d.out, "MENU       \x06\x06\x06\x06\x06");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);
     assert_line(d.idle(), MENU_BRIGHT);
@@ -215,7 +215,7 @@ static void test_rotation_while_held_still_steps(void) {
     assert_line(d.feed(UiInput::StepCW), TIME_LINE);
     TEST_ASSERT_TRUE(d.out.animating);
     // The bar keeps filling from the original press (overriding the fade).
-    assert_line(d.idle(4), "MENU     [\x7F\x7F   ]");  // held 700 ms
+    assert_line(d.idle(4), "MENU       \x06\x06   ");  // held 700 ms
 }
 
 // The fill is column-granular: between the 100 ms tick boundaries the leading
@@ -226,9 +226,9 @@ static void test_hold_bar_column_granular(void) {
     FsmDriver d;
     d.feed(UiInput::BtnDown);
     d.now_us += 540000;  // held 540 ms = 2 columns
-    assert_line(d.feed(UiInput::None), "MENU     [\x02    ]");
+    assert_line(d.feed(UiInput::None), "MENU       \x02    ");
     d.now_us += 220000;  // held 760 ms = 13 columns: 2 full cells + 3 columns
-    assert_line(d.feed(UiInput::None), "MENU     [\x7F\x7F\x03  ]");
+    assert_line(d.feed(UiInput::None), "MENU       \x06\x06\x03  ");
 }
 
 static void test_menu_step_wraps(void) {
@@ -270,7 +270,7 @@ static void test_long_press_from_menu_exits_without_effects(void) {
     FsmDriver d;
     enter_menu(d);
     d.long_press();
-    assert_line(d.out, "EXIT     [\x7F\x7F\x7F\x7F\x7F]");
+    assert_line(d.out, "EXIT       \x06\x06\x06\x06\x06");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);  // nothing to undo from Menu mode
     assert_line(d.idle(), TIME_LINE);
@@ -335,7 +335,7 @@ static void test_portal_banner_only_on_pages_and_below_hold_bar(void) {
     d.snap.net = UiNetState::Portal;
     // The hold bar overrides the banner...
     d.feed(UiInput::BtnDown);
-    assert_line(d.idle(5), "MENU     [     ]");
+    assert_line(d.idle(5), "MENU            ");
     d.idle(5);  // fire into the menu
     // ...and the menu renders normally with the portal active.
     assert_line(d.idle(), MENU_BRIGHT);

@@ -103,9 +103,9 @@ VFD symbols missing from this tube's CGROM:
 | Code | Glyph |
 |------|-------|
 | 0x01–0x04 | progress-bar cell, code = lit columns (1–4) |
-| 0x7F | full bar cell (CGROM solid block — no slot spent) |
 | 0x05 | solid right arrow (menu cursor) |
-| 0x06–0x07 | unassigned when idle |
+| 0x06 | full bar cell (solid block) — CGROM 0x7F is blank on this tube, so it's a CGRAM glyph |
+| 0x07 | unassigned when idle |
 
 The core emits the desired contents of all 7 slots in every `UiOutput`; the shell
 diff-uploads against a per-slot cache (first tick populates CGRAM, later ticks only send
@@ -162,7 +162,7 @@ pauses auto-cycle for 30 s):
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
-while held; `MENU     [==   ]` progress bar appears after 0.5 s) = enter menu. Click on
+while held; `MENU       ==   ` progress bar appears after 0.5 s) = enter menu. Click on
 the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
 `WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
 
@@ -170,7 +170,7 @@ the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
 immediate `settings_save` + live apply; 20 s inactivity or long-press = exit to pages
 (abandons an uncommitted edit). Holding the button shows a progress bar after 0.5 s
-(`EXIT     [==   ]`) and the exit fires at 1.0 s while still held. The bar fill is
+(`EXIT       ==   `) and the exit fires at 1.0 s while still held. The bar fill is
 column-granular (5 cells × 5 columns over the 500 ms window; at the 100 ms idle tick it
 advances one full cell per render — finer ticks reveal the partial-cell glyphs).
 

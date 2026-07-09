@@ -175,9 +175,9 @@ void UiFsm::render_hold_bar(char line[17], int64_t held_us) const {
         bar[i] = lit == 0 ? ' ' : lit == 5 ? UI_GLYPH_BAR_FULL : (char)lit;
     }
     bar[UI_HOLD_BAR_SEGS] = '\0';
-    // Label on the left, bracketed bar flush with the right edge; the
-    // computed pad keeps the full 16 chars written for any segment count.
-    snprintf(line, 17, "%-*s[%s]", 16 - (UI_HOLD_BAR_SEGS + 2),
+    // Label on the left, bar flush with the right edge; the computed pad keeps
+    // the full 16 chars written for any segment count.
+    snprintf(line, 17, "%-*s%s", 16 - UI_HOLD_BAR_SEGS,
              mode_ == Mode::Pages ? "MENU" : "EXIT", bar);
 }
 

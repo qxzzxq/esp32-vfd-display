@@ -84,8 +84,7 @@ static void test_idle_tick_carries_default_glyphs(void) {
         TEST_ASSERT_EQUAL_UINT8_ARRAY(UI_GLYPHS[i].cols,
                                       d.out.glyphs[UI_GLYPHS[i].slot], 5);
     static const uint8_t ZEROS[5] = {0, 0, 0, 0, 0};
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(ZEROS, d.out.glyphs[6], 5);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(ZEROS, d.out.glyphs[7], 5);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(ZEROS, d.out.glyphs[7], 5);  // only slot 7 unused now
 }
 
 // ---- TIME lockstep roll ----
@@ -189,7 +188,7 @@ static void test_btndown_mid_roll_cancels_before_hold_bar(void) {
     d.idle_us(30000, 3);  // TIME roll mid-flight
     assert_line(d.feed(UiInput::BtnDown), "    14:25:37    ");  // snapped
     TEST_ASSERT_FALSE(d.out.animating);
-    assert_line(d.idle(5), "MENU     [     ]");  // bar at 500 ms
+    assert_line(d.idle(5), "MENU            ");  // bar at 500 ms
     TEST_ASSERT_TRUE(d.out.animating);           // hold bar animates the fill
 }
 
