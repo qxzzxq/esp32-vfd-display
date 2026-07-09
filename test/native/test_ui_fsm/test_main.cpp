@@ -11,16 +11,20 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // Golden lines for make_snapshot() (24h, SAT 2026-07-05, bright 128 = 8).
+// \x05 is the CGRAM arrow cursor, \x7F the CGROM solid block (full bar cell),
+// \x01..\x04 the partial bar cells (code == lit columns). Hex escapes are
+// greedy — a glyph code followed by a hex-digit-ish char needs adjacent-
+// literal concatenation ("\x05" "BRIGHT", not "\x05BRIGHT" == "\x5BRIGHT").
 static const char* TIME_LINE = "    14:25:36    ";
 static const char* DATE_LINE = " SAT 2026-07-05 ";
 static const char* INDOOR_LINE = "IN  23.4C   47% ";
 static const char* OUTDOOR_LINE = "OUT 31C 60% UV9 ";
 static const char* PRESSURE_LINE = "PRES 1013.2 hPa ";
 static const char* CUSTOM_LINE = "       HI       ";  // msg "HI", centered
-static const char* MENU_BRIGHT = ">BRIGHT        8";
-static const char* EDIT_BRIGHT_8 = " BRIGHT       >8";
-static const char* MENU_WIFI = ">WIFI RESET     ";
-static const char* MENU_EXIT = ">EXIT           ";
+static const char* MENU_BRIGHT = "\x05" "BRIGHT        8";
+static const char* EDIT_BRIGHT_8 = " BRIGHT       \x05" "8";
+static const char* MENU_WIFI = "\x05" "WIFI RESET     ";
+static const char* MENU_EXIT = "\x05" "EXIT           ";
 
 static void assert_line(const UiOutput& out, const char* expect) {
     TEST_ASSERT_EQUAL_STRING(expect, out.line);
@@ -158,12 +162,12 @@ static void test_hold_bar_timeline_and_menu_entry(void) {
     // Clicks stay visually clean: no bar below 500 ms.
     assert_line(d.idle(4), TIME_LINE);  // held 400 ms
     assert_line(d.idle(1), "MENU     [     ]");  // held 500 ms, bar appears empty
-    assert_line(d.idle(2), "MENU     [==   ]");  // held 700 ms
-    assert_line(d.idle(2), "MENU     [==== ]");  // held 900 ms
+    assert_line(d.idle(2), "MENU     [\x7F\x7F   ]");  // held 700 ms = 10 columns
+    assert_line(d.idle(2), "MENU     [\x7F\x7F\x7F\x7F ]");  // held 900 ms
     // Threshold tick: completed bar is drawn, the fire is signalled for the
     // shell's 200 ms pause, and the menu is entered at item 0.
     d.idle(1);  // held 1.0 s
-    assert_line(d.out, "MENU     [=====]");
+    assert_line(d.out, "MENU     [\x7F\x7F\x7F\x7F\x7F]");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);
     assert_line(d.idle(), MENU_BRIGHT);
@@ -197,7 +201,20 @@ static void test_rotation_while_held_still_steps(void) {
     d.idle(3);  // held 300 ms, no bar yet
     assert_line(d.feed(UiInput::StepCW), DATE_LINE);
     // The bar keeps filling from the original press.
-    assert_line(d.idle(4), "MENU     [==   ]");  // held 700 ms
+    assert_line(d.idle(4), "MENU     [\x7F\x7F   ]");  // held 700 ms
+}
+
+// The fill is column-granular: between the 100 ms tick boundaries the leading
+// cell renders as a partial CGRAM bar glyph (code == lit columns). Only
+// reachable with off-tick timing here; on-target it shows once the tick rate
+// rises while animating.
+static void test_hold_bar_column_granular(void) {
+    FsmDriver d;
+    d.feed(UiInput::BtnDown);
+    d.now_us += 540000;  // held 540 ms = 2 columns
+    assert_line(d.feed(UiInput::None), "MENU     [\x02    ]");
+    d.now_us += 220000;  // held 760 ms = 13 columns: 2 full cells + 3 columns
+    assert_line(d.feed(UiInput::None), "MENU     [\x7F\x7F\x03  ]");
 }
 
 static void test_menu_step_wraps(void) {
@@ -222,24 +239,24 @@ static void test_bright_edit_commit_flow(void) {
     enter_menu(d);
     assert_line(d.click(), EDIT_BRIGHT_8);  // seed from saved 128
     assert_no_effects(d.out);
-    assert_line(d.feed(UiInput::StepCW), " BRIGHT       >9");
+    assert_line(d.feed(UiInput::StepCW), " BRIGHT       \x05" "9");
     assert_single_effect(d.out, UiEffect::Type::SetBrightness, 144);  // live preview
     d.click();  // commit
     assert_single_effect(d.out, UiEffect::Type::CommitBrightness, 144);
     // The commit tick must already show the committed value — the persist
     // effect runs after the draw, so the item updates the tick's view
     // (regression: the menu flashed the previous value for one tick).
-    assert_line(d.out, ">BRIGHT        9");
+    assert_line(d.out, "\x05" "BRIGHT        9");
     // Once the shell persists (snapshot catches up), it stays the new value.
     d.snap.bright = 144;
-    assert_line(d.idle(), ">BRIGHT        9");
+    assert_line(d.idle(), "\x05" "BRIGHT        9");
 }
 
 static void test_long_press_from_menu_exits_without_effects(void) {
     FsmDriver d;
     enter_menu(d);
     d.long_press();
-    assert_line(d.out, "EXIT     [=====]");
+    assert_line(d.out, "EXIT     [\x7F\x7F\x7F\x7F\x7F]");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);  // nothing to undo from Menu mode
     assert_line(d.idle(), TIME_LINE);
@@ -272,7 +289,7 @@ static void test_menu_timeout_during_edit_aborts(void) {
     d.click();                 // edit, seeded 8
     d.feed(UiInput::StepCCW);  // dim to 7 — last input
     d.idle(200);               // 20.0 s later: still editing
-    assert_line(d.out, " BRIGHT       >7");
+    assert_line(d.out, " BRIGHT       \x05" "7");
     d.idle(1);                 // 20.1 s: abandon the edit
     assert_line(d.out, TIME_LINE);
     assert_single_effect(d.out, UiEffect::Type::SetBrightness, 128);
@@ -327,6 +344,7 @@ int main(int, char**) {
     RUN_TEST(test_release_after_fire_is_swallowed);
     RUN_TEST(test_release_exactly_at_threshold_is_lost);
     RUN_TEST(test_rotation_while_held_still_steps);
+    RUN_TEST(test_hold_bar_column_granular);
     RUN_TEST(test_menu_step_wraps);
     RUN_TEST(test_exit_item_returns_to_pages);
     RUN_TEST(test_bright_edit_commit_flow);

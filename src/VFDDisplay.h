@@ -15,6 +15,7 @@ class VFDDisplay {
     void init();
     void writeChar(unsigned char position, unsigned char character);
     void writeString(unsigned char position, const char* str);
+    void setCustomChar(unsigned char slot, const unsigned char cols[5]);
     void setBrightness(unsigned char brightness);
     void clear();
     void show();

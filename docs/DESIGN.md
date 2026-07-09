@@ -28,7 +28,8 @@ All three strap pins (2/8/9) stay unconnected. KY-040 runs at 3.3 V.
 
 ## Modules
 
-All new code lives in `src/` (the only IDF component dir). `VFDDisplay.{h,cpp}` is unchanged.
+All new code lives in `src/` (the only IDF component dir). `VFDDisplay.{h,cpp}` is unchanged
+except for `setCustomChar()` (CGRAM glyph upload — see "CGRAM glyphs" under UI).
 Style: plain C++/C matching `VFDDisplay`, ESP-IDF C APIs, no frameworks. Producer modules
 own their data and expose copy-out getters — no global state struct, no cross-module locking.
 
@@ -87,6 +88,22 @@ own their data and expose copy-out getters — no global state struct, no cross-
 
 Every screen is 16 uppercase ASCII characters (VFD lowercase glyphs unverified).
 
+**CGRAM glyphs** (contract in `src/ui/glyphs.h`): the display's CGRAM holds 8 user-defined
+5×7 glyphs shown by character codes 0x00–0x07; code 0x00 is never used (lines are
+NUL-terminated C strings), leaving 7 usable slots. The shell uploads the table after
+`VFDDisplay::init()` (controller reset clears CGRAM). Defined glyphs recreate the 8-bit
+VFD symbols missing from this tube's CGROM:
+
+| Code | Glyph |
+|------|-------|
+| 0x01–0x04 | progress-bar cell, code = lit columns (1–4) |
+| 0x7F | full bar cell (CGROM solid block — no slot spent) |
+| 0x05 | solid right arrow (menu cursor) |
+| 0x06–0x07 | free (reserved for the roll animations) |
+
+In this document's screen mockups, `>` stands for the arrow glyph and `=` for bar-fill
+blocks.
+
 **Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
 pauses auto-cycle for 30 s):
 
@@ -104,12 +121,13 @@ while held; `MENU     [==   ]` progress bar appears after 0.5 s) = enter menu. C
 the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
 `WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
 
-**Menu**: rotate = move between items; click = enter edit (the `>` cursor moves to the
+**Menu**: rotate = move between items; click = enter edit (the cursor moves to the
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
 immediate `settings_save` + live apply; 20 s inactivity or long-press = exit to pages
 (abandons an uncommitted edit). Holding the button shows a progress bar after 0.5 s
-(`EXIT     [==   ]`, 5 segments, one `=` per 100 ms render tick) and the exit fires at
-1.0 s while still held.
+(`EXIT     [==   ]`) and the exit fires at 1.0 s while still held. The bar fill is
+column-granular (5 cells × 5 columns over the 500 ms window; at the 100 ms idle tick it
+advances one full cell per render — finer ticks reveal the partial-cell glyphs).
 
 ```
 >BRIGHT      13      0..15 → driver 0..240 (×16); clamp min 1 while editing; applied live
@@ -250,8 +268,9 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   marquee cadence/wrap gap on the VFD, auto-advance when the shown message is
   cleared.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
-  lat/lon/TZ fields. *Verify:* overnight soak — no reboots, clock correct, heap stable
-  (via /api/status).
+  lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
+  vertical-roll animations (TIME digits + page changes). *Verify:* overnight soak —
+  no reboots, clock correct, heap stable (via /api/status).
 
 ## Open questions / risks
 

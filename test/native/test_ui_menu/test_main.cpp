@@ -40,9 +40,11 @@ static void test_registry_has_three_items(void) {
     TEST_ASSERT_EQUAL_INT(ITEM_COUNT, n);
 }
 
+// \x05 is the CGRAM arrow cursor. Hex escapes are greedy, so a code followed
+// by a hex-digit-ish char needs adjacent-literal concatenation ("\x05" "BRIGHT").
 static void test_bright_render_highlighted(void) {
     UiSnapshot s = make_snapshot();  // bright 128 = menu units 8
-    assert_render(ITEM_BRIGHT, false, s, ">BRIGHT        8");
+    assert_render(ITEM_BRIGHT, false, s, "\x05" "BRIGHT        8");
 }
 
 static void test_bright_click_seeds_and_enters_edit(void) {
@@ -51,8 +53,8 @@ static void test_bright_click_seeds_and_enters_edit(void) {
     TEST_ASSERT_EQUAL_INT((int)MenuItem::ClickResult::EnterEdit,
                           (int)item(ITEM_BRIGHT)->on_click(s, out));
     TEST_ASSERT_EQUAL_INT(0, out.effect_count);
-    // ">" cursor moves to the value side while editing
-    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       >8");
+    // arrow cursor moves to the value side while editing
+    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       \x05" "8");
 }
 
 static void test_bright_seed_clamps_zero_to_one(void) {
@@ -62,7 +64,7 @@ static void test_bright_seed_clamps_zero_to_one(void) {
     s.bright = 0;
     UiOutput out = make_output();
     item(ITEM_BRIGHT)->on_click(s, out);
-    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       >1");
+    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       \x05" "1");
     TEST_ASSERT_TRUE(item(ITEM_BRIGHT)->edit_click(s, out));
     assert_single_effect(out, UiEffect::Type::CommitBrightness, 16);
 }
@@ -73,7 +75,7 @@ static void test_bright_step_changes_value_with_live_preview(void) {
     item(ITEM_BRIGHT)->on_click(s, out);  // seed 8
     TEST_ASSERT_TRUE(item(ITEM_BRIGHT)->edit_step(1, s, out));
     assert_single_effect(out, UiEffect::Type::SetBrightness, 144);  // 9 * 16
-    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       >9");
+    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       \x05" "9");
 }
 
 static void test_bright_step_clamps_and_still_previews(void) {
@@ -84,14 +86,14 @@ static void test_bright_step_clamps_and_still_previews(void) {
     item(ITEM_BRIGHT)->on_click(s, out);  // seed 15
     TEST_ASSERT_TRUE(item(ITEM_BRIGHT)->edit_step(1, s, out));
     assert_single_effect(out, UiEffect::Type::SetBrightness, 240);
-    assert_render(ITEM_BRIGHT, true, s, " BRIGHT      >15");
+    assert_render(ITEM_BRIGHT, true, s, " BRIGHT      \x05" "15");
 
     s.bright = 16;  // menu units 1
     out = make_output();
     item(ITEM_BRIGHT)->on_click(s, out);  // seed 1
     TEST_ASSERT_TRUE(item(ITEM_BRIGHT)->edit_step(-1, s, out));
     assert_single_effect(out, UiEffect::Type::SetBrightness, 16);
-    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       >1");
+    assert_render(ITEM_BRIGHT, true, s, " BRIGHT       \x05" "1");
 }
 
 static void test_bright_commit_persists_edited_value(void) {
@@ -105,7 +107,7 @@ static void test_bright_commit_persists_edited_value(void) {
     // The commit also updates the view so the same tick renders the new
     // value (the persist effect only executes after the draw).
     TEST_ASSERT_EQUAL_INT(144, s.bright);
-    assert_render(ITEM_BRIGHT, false, s, ">BRIGHT        9");
+    assert_render(ITEM_BRIGHT, false, s, "\x05" "BRIGHT        9");
 }
 
 static void test_bright_abort_restores_saved_brightness(void) {
@@ -120,7 +122,7 @@ static void test_bright_abort_restores_saved_brightness(void) {
 
 static void test_wifi_reset_render(void) {
     UiSnapshot s = make_snapshot();
-    assert_render(ITEM_WIFIRST, false, s, ">WIFI RESET     ");
+    assert_render(ITEM_WIFIRST, false, s, "\x05" "WIFI RESET     ");
     assert_render(ITEM_WIFIRST, true, s, "CLICK = CONFIRM ");
 }
 
@@ -141,7 +143,7 @@ static void test_wifi_reset_arm_cancel_confirm(void) {
 
 static void test_exit_render_and_click(void) {
     UiSnapshot s = make_snapshot();
-    assert_render(ITEM_EXIT, false, s, ">EXIT           ");
+    assert_render(ITEM_EXIT, false, s, "\x05" "EXIT           ");
     UiOutput out = make_output();
     TEST_ASSERT_EQUAL_INT((int)MenuItem::ClickResult::ExitMenu,
                           (int)item(ITEM_EXIT)->on_click(s, out));

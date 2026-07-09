@@ -6,6 +6,8 @@
 
 #include <stdio.h>
 
+#include "glyphs.h"
+
 namespace {
 
 // Brightness value edit: menu units 1..15, driver = x16. Rotation previews
@@ -13,13 +15,13 @@ namespace {
 class BrightItem : public MenuItem {
   public:
     void render(char line[17], bool editing, const UiSnapshot& s) const override {
-        // Edit mode is indicated by the ">" cursor moving to the value side
+        // Edit mode is indicated by the arrow cursor moving to the value side
         if (editing) {
             char v[8];
-            snprintf(v, sizeof(v), ">%d", val_);
+            snprintf(v, sizeof(v), "%c%d", UI_GLYPH_ARROW, val_);
             snprintf(line, 17, " BRIGHT %8s", v);
         } else {
-            snprintf(line, 17, ">BRIGHT %8d", s.bright / 16);
+            snprintf(line, 17, "%cBRIGHT %8d", UI_GLYPH_ARROW, s.bright / 16);
         }
     }
     ClickResult on_click(const UiSnapshot& s, UiOutput&) override {
@@ -56,7 +58,7 @@ class WifiResetItem : public MenuItem {
         if (editing)
             snprintf(line, 17, "CLICK = CONFIRM ");
         else
-            snprintf(line, 17, ">WIFI RESET     ");
+            snprintf(line, 17, "%cWIFI RESET     ", UI_GLYPH_ARROW);
     }
     ClickResult on_click(const UiSnapshot&, UiOutput&) override {
         return ClickResult::EnterEdit;  // "CLICK = CONFIRM" armed
@@ -73,7 +75,7 @@ class WifiResetItem : public MenuItem {
 class ExitItem : public MenuItem {
   public:
     void render(char line[17], bool, const UiSnapshot&) const override {
-        snprintf(line, 17, ">EXIT           ");
+        snprintf(line, 17, "%cEXIT           ", UI_GLYPH_ARROW);
     }
     ClickResult on_click(const UiSnapshot&, UiOutput&) override {
         return ClickResult::ExitMenu;

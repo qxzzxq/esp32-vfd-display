@@ -104,6 +104,21 @@ void VFDDisplay::writeString(unsigned char position, const char* str) {
   show();
 }
 
+void VFDDisplay::setCustomChar(unsigned char slot, const unsigned char cols[5]) {
+  // Define one of the 8 CGRAM glyphs (shown by DCRAM character codes
+  // 0x00-0x07). cols are the 5 columns left->right, bit0 = top pixel ..
+  // bit6 = bottom; bit7 is ignored by the controller. Controller reset clears
+  // CGRAM, so glyphs must be re-uploaded after init(). No show() needed:
+  // CGRAM edits appear on the next scan of any digit showing the slot's code.
+  beginTransfer();
+  spiWrite(0x40 | (slot & 0x07)); // CGRAM data write + address
+  for (int i = 0; i < 5; i++) {
+    spiWrite(cols[i]);
+  }
+  endTransfer();
+  esp_rom_delay_us(5);
+}
+
 void VFDDisplay::setBrightness(unsigned char brightness) {
   beginTransfer();
   spiWrite(0xe4);
