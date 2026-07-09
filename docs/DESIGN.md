@@ -176,8 +176,9 @@ pauses auto-cycle for 30 s):
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
 while held; `MENU       ==   ` progress bar appears after 0.5 s) = enter menu. Click on
-the pages is unassigned. Device status (the STA IP / `AP 192.168.4.1` in portal
-mode / `WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
+the pages is unassigned. Device info (the STA IP / `AP 192.168.4.1` in portal
+mode / `WIFI CONNECTING`, plus the firmware version) is shown via the `>ABOUT`
+menu item (M7).
 
 **Menu**: rotate = move between items; click = enter edit (the cursor moves to the
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
@@ -193,7 +194,7 @@ advances one full cell per render — finer ticks reveal the partial-cell glyphs
 >TZ       PARIS      rotates timezone table
 >CYCLE      10s      OFF/5/10/30/60 s
 >WIFI RESET          click → "CLICK=CONFIRM" → click again → erase creds + reboot; rotate = cancel
->STATUS              click → IP address / WiFi state for 3 s
+>ABOUT               click → overlay; rotate pages IP/WiFi state <-> firmware version (crossfaded); click exits
 >EXIT
 ```
 
@@ -329,13 +330,15 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   (bar cells + arrow cursor — done, v0.9.0), vertical-roll animation (TIME
   digits — done, v0.10.0; a page-change roll was tried and removed after
   hardware testing, replaced by a dimming crossfade for page transitions —
-  done, v0.11.0; see "Animations"), full menu (24H, TZ, CYCLE, STATUS) +
-  page auto-cycle (done, v0.13.0). The STATUS item borrows the edit sub-mode as
-  a self-dismissing overlay via `MenuItem::edit_timeout_us`; auto-cycle lives in
-  `UiFsm` (advance every `cycle_s` once past a 30 s post-input pause, skipping
-  unavailable pages) — both covered by the `test_ui_menu`/`test_ui_fsm` suites.
-  *Remaining hardware verify:* overnight soak — no reboots, clock correct, heap
-  stable (via /api/status); then bump to v1.0.0.
+  done, v0.11.0; see "Animations"), full menu (24H, TZ, CYCLE, ABOUT) +
+  page auto-cycle (done, v0.13.0). The ABOUT item borrows the edit sub-mode as a
+  two-page overlay (IP/WiFi state and firmware version); rotation pages between
+  them and they crossfade via `MenuItem::edit_subscreen` folded into
+  `UiFsm::screen_id`. Auto-cycle lives in `UiFsm` (advance every `cycle_s` once
+  past a 30 s post-input pause, skipping unavailable pages) — both covered by the
+  `test_ui_menu`/`test_ui_fsm` suites. *Remaining hardware verify:* overnight
+  soak — no reboots, clock correct, heap stable (via /api/status); then bump to
+  v1.0.0.
 
 ## Open questions / risks
 

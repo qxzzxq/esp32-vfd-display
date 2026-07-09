@@ -161,38 +161,47 @@ class CycleItem : public MenuItem {
     int idx_ = 0;
 };
 
-// Read-only device status: click shows the IP / WiFi state; it auto-returns to
-// the menu after UI_STATUS_SHOW_US (or on any input). Not a value edit — it
-// borrows the edit sub-mode purely as a transient overlay.
-class StatusItem : public MenuItem {
+// Read-only "about" overlay: click opens it, rotation pages between the device
+// IP (or WiFi state) and the firmware version, a click dismisses. Not a value
+// edit — it borrows the edit sub-mode as a transient two-page overlay. The
+// pages crossfade because UiFsm::screen_id folds edit_subscreen() into the id.
+class AboutItem : public MenuItem {
   public:
     void render(char line[17], bool editing, const UiSnapshot& s) const override {
         if (!editing) {
-            snprintf(line, 17, "%cSTATUS         ", UI_GLYPH_ARROW);
-            return;
-        }
-        switch (s.net) {
-            case UiNetState::Connected:
-                snprintf(line, 17, "%-16s", s.ip[0] ? s.ip : "NO IP");
-                break;
-            case UiNetState::Connecting:
-                snprintf(line, 17, "WIFI CONNECTING ");
-                break;
-            case UiNetState::Portal:
-                snprintf(line, 17, "AP 192.168.4.1  ");
-                break;
+            snprintf(line, 17, "%cABOUT          ", UI_GLYPH_ARROW);
+        } else if (page_ == 0) {
+            switch (s.net) {
+                case UiNetState::Connected:
+                    snprintf(line, 17, "%-16s", s.ip[0] ? s.ip : "NO IP");
+                    break;
+                case UiNetState::Connecting:
+                    snprintf(line, 17, "WIFI CONNECTING ");
+                    break;
+                case UiNetState::Portal:
+                    snprintf(line, 17, "AP 192.168.4.1  ");
+                    break;
+            }
+        } else {
+            snprintf(line, 17, "VER %-12s", s.version);
         }
     }
     ClickResult on_click(const UiSnapshot&, UiOutput&) override {
-        return ClickResult::EnterEdit;  // show the status overlay
+        page_ = 0;  // always open on the IP page
+        return ClickResult::EnterEdit;
     }
-    bool edit_step(int, const UiSnapshot&, UiOutput&) override {
-        return false;  // any rotation dismisses back to the menu
+    bool edit_step(int dir, const UiSnapshot&, UiOutput&) override {
+        page_ = (page_ + dir + NPAGES) % NPAGES;  // rotation pages; never dismisses
+        return true;
     }
     bool edit_click(UiSnapshot&, UiOutput&) override {
         return true;  // a click dismisses back to the menu
     }
-    int64_t edit_timeout_us() const override { return UI_STATUS_SHOW_US; }
+    uint8_t edit_subscreen() const override { return (uint8_t)page_; }
+
+  private:
+    static constexpr int NPAGES = 2;
+    int page_ = 0;
 };
 
 // Two-step credential erase: click arms the confirm, rotate cancels, a
@@ -232,13 +241,13 @@ Use24hItem s_use24h;
 TzItem s_tz;
 CycleItem s_cycle;
 WifiResetItem s_wifi_reset;
-StatusItem s_status;
+AboutItem s_about;
 ExitItem s_exit;
 
 // Rotation order per docs/DESIGN.md: BRIGHT, 24H, TZ, CYCLE, WIFI RESET,
-// STATUS, EXIT. test/native/test_ui_menu pins the order.
-MenuItem* const s_items[] = {&s_bright, &s_use24h,     &s_tz,    &s_cycle,
-                             &s_wifi_reset, &s_status, &s_exit};
+// ABOUT, EXIT. test/native/test_ui_menu pins the order.
+MenuItem* const s_items[] = {&s_bright,     &s_use24h, &s_tz,   &s_cycle,
+                             &s_wifi_reset, &s_about,  &s_exit};
 
 }  // namespace
 

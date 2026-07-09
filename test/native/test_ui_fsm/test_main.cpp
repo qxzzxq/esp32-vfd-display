@@ -27,7 +27,7 @@ static const char* MENU_24H = "\x05" "24H          ON";  // make_snapshot: 24h o
 static const char* MENU_TZ = "\x05" "TZ          UTC";   // tz_idx 0 = UTC (helper)
 static const char* MENU_CYCLE = "\x05" "CYCLE       OFF"; // cycle_s 0 = OFF
 static const char* MENU_WIFI = "\x05" "WIFI RESET     ";
-static const char* MENU_STATUS = "\x05" "STATUS         ";
+static const char* MENU_ABOUT = "\x05" "ABOUT          ";
 static const char* MENU_EXIT = "\x05" "EXIT           ";
 
 static void assert_line(const UiOutput& out, const char* expect) {
@@ -240,7 +240,7 @@ static void test_hold_bar_column_granular(void) {
 }
 
 // step() settles the item-to-item crossfade so the destination item is asserted.
-// Walks the full M7 registry order: BRIGHT,24H,TZ,CYCLE,WIFI,STATUS,EXIT.
+// Walks the full M7 registry order: BRIGHT,24H,TZ,CYCLE,WIFI,ABOUT,EXIT.
 static void test_menu_step_wraps(void) {
     FsmDriver d;
     enter_menu(d);
@@ -248,7 +248,7 @@ static void test_menu_step_wraps(void) {
     assert_line(d.step(UiInput::StepCW), MENU_TZ);
     assert_line(d.step(UiInput::StepCW), MENU_CYCLE);
     assert_line(d.step(UiInput::StepCW), MENU_WIFI);
-    assert_line(d.step(UiInput::StepCW), MENU_STATUS);
+    assert_line(d.step(UiInput::StepCW), MENU_ABOUT);
     assert_line(d.step(UiInput::StepCW), MENU_EXIT);
     assert_line(d.step(UiInput::StepCW), MENU_BRIGHT);  // wraps forward
     assert_line(d.step(UiInput::StepCCW), MENU_EXIT);   // wraps backward
@@ -426,31 +426,47 @@ static void test_auto_cycle_skips_empty_custom(void) {
     assert_line(d.settle(), PRESSURE_LINE);
 }
 
-// --- STATUS overlay -----------------------------------------------------
+// --- ABOUT overlay ------------------------------------------------------
 
-static void goto_status(FsmDriver& d) {
+static void goto_about(FsmDriver& d) {
     enter_menu(d);  // BRIGHT
-    for (int i = 0; i < 5; i++) d.step(UiInput::StepCW);  // -> STATUS (index 5)
-    assert_line(d.out, MENU_STATUS);
+    for (int i = 0; i < 5; i++) d.step(UiInput::StepCW);  // -> ABOUT (index 5)
+    assert_line(d.out, MENU_ABOUT);
 }
 
-// Click opens the read-only status line; it auto-returns to the menu item after
-// UI_STATUS_SHOW_US with nothing persisted.
-static void test_status_overlay_returns_after_timeout(void) {
+// Click opens the IP page (same screen id as the menu item: it snaps, no fade).
+static void test_about_click_opens_ip_page(void) {
     FsmDriver d;
-    goto_status(d);
+    goto_about(d);
     strcpy(d.snap.ip, "10.0.0.5");  // net Connected by default
-    assert_line(d.click(), "10.0.0.5        ");  // overlay (same screen id: snaps)
+    assert_line(d.click(), "10.0.0.5        ");
     assert_no_effects(d.out);
-    d.now_us += 3100000;  // past the 3 s auto-return
-    assert_line(d.feed(UiInput::None), MENU_STATUS);
+    TEST_ASSERT_FALSE(d.out.animating);  // entering edit does not fade
 }
 
-static void test_status_overlay_dismissed_by_rotation(void) {
+// Rotation pages IP <-> version, and each page change crossfades (dim out the
+// current page, swap, dim the next in) — driven by edit_subscreen in screen_id.
+static void test_about_rotation_pages_crossfade(void) {
     FsmDriver d;
-    goto_status(d);
-    d.click();  // open the overlay
-    assert_line(d.feed(UiInput::StepCW), MENU_STATUS);  // any rotation dismisses it
+    goto_about(d);
+    strcpy(d.snap.ip, "10.0.0.5");
+    d.click();  // page 0 = IP
+    // Rotate to the version page: the IP dims out first (fade Out shows it).
+    assert_line(d.feed(UiInput::StepCW), "10.0.0.5        ");
+    TEST_ASSERT_TRUE(d.out.animating);
+    assert_line(d.settle(), "VER 1.2.3       ");  // version, dimmed back in
+    // Rotate again wraps back to the IP page, crossfading too.
+    d.feed(UiInput::StepCW);
+    TEST_ASSERT_TRUE(d.out.animating);
+    assert_line(d.settle(), "10.0.0.5        ");
+}
+
+static void test_about_click_dismisses_to_menu(void) {
+    FsmDriver d;
+    goto_about(d);
+    d.click();                            // open the overlay
+    assert_line(d.click(), MENU_ABOUT);   // a click dismisses back to the item
+    assert_no_effects(d.out);
 }
 
 int main(int, char**) {
@@ -486,7 +502,8 @@ int main(int, char**) {
     RUN_TEST(test_auto_cycle_off_never_advances);
     RUN_TEST(test_auto_cycle_paused_by_input);
     RUN_TEST(test_auto_cycle_skips_empty_custom);
-    RUN_TEST(test_status_overlay_returns_after_timeout);
-    RUN_TEST(test_status_overlay_dismissed_by_rotation);
+    RUN_TEST(test_about_click_opens_ip_page);
+    RUN_TEST(test_about_rotation_pages_crossfade);
+    RUN_TEST(test_about_click_dismisses_to_menu);
     return UNITY_END();
 }

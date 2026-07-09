@@ -55,13 +55,6 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
             default:
                 break;
         }
-    } else if (mode_ == Mode::Edit && items_[item_]->edit_timeout_us() > 0) {
-        // A self-dismissing edit overlay (STATUS): auto-return to its menu item
-        // after the item's own timeout, undoing any transient side effects.
-        if (now_us - last_input_us_ > items_[item_]->edit_timeout_us()) {
-            items_[item_]->edit_abort(view, *out);
-            mode_ = Mode::Menu;
-        }
     } else if (mode_ != Mode::Pages) {
         // Inactivity: abandon the menu (and any uncommitted edit)
         if (now_us - last_input_us_ > UI_MENU_TIMEOUT_US) abort_to_pages(view, *out);
@@ -215,10 +208,14 @@ void UiFsm::default_glyphs(UiOutput* out) {
 
 UiFsm::ScreenId UiFsm::screen_id(bool hold_visible, const UiSnapshot& s) const {
     // Must mirror render()'s priority so the id names exactly what is on screen.
-    if (hold_visible) return {Screen::HoldBar, 0};
-    if (mode_ == Mode::Pages && s.net == UiNetState::Portal) return {Screen::Portal, 0};
-    if (mode_ == Mode::Pages) return {Screen::Page, page_};
-    return {Screen::Menu, item_};  // Menu and Edit collapse (Edit must not fade)
+    if (hold_visible) return {Screen::HoldBar, 0, 0};
+    if (mode_ == Mode::Pages && s.net == UiNetState::Portal) return {Screen::Portal, 0, 0};
+    if (mode_ == Mode::Pages) return {Screen::Page, page_, 0};
+    // Menu and Edit share kind+idx (Edit must not fade on entry). An editing
+    // item's sub-screen splits its internal pages so they crossfade (ABOUT: IP
+    // vs version); value edits keep sub 0 and stay unfaded.
+    uint8_t sub = mode_ == Mode::Edit ? items_[item_]->edit_subscreen() : 0;
+    return {Screen::Menu, item_, sub};
 }
 
 void UiFsm::apply_transition(char line[17], int64_t now_us, const UiSnapshot& s,

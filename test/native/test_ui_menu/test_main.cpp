@@ -17,7 +17,7 @@ enum {
     ITEM_TZ,
     ITEM_CYCLE,
     ITEM_WIFIRST,
-    ITEM_STATUS,
+    ITEM_ABOUT,
     ITEM_EXIT,
     ITEM_COUNT
 };
@@ -46,7 +46,7 @@ static void assert_single_effect(const UiOutput& out, UiEffect::Type t, uint8_t 
 static void test_registry_has_all_items(void) {
     uint8_t n = 0;
     ui_menu_items(&n);
-    TEST_ASSERT_EQUAL_INT(ITEM_COUNT, n);  // BRIGHT,24H,TZ,CYCLE,WIFI,STATUS,EXIT
+    TEST_ASSERT_EQUAL_INT(ITEM_COUNT, n);  // BRIGHT,24H,TZ,CYCLE,WIFI,ABOUT,EXIT
 }
 
 // \x05 is the CGRAM arrow cursor. Hex escapes are greedy, so a code followed
@@ -212,37 +212,49 @@ static void test_cycle_edit_wraps_backward(void) {
     assert_render(ITEM_CYCLE, true, s, " CYCLE      \x05" "60s");
 }
 
-// --- STATUS overlay -----------------------------------------------------
-static void test_status_render_highlighted(void) {
+// --- ABOUT overlay ------------------------------------------------------
+static void test_about_render_highlighted(void) {
     UiSnapshot s = make_snapshot();
-    assert_render(ITEM_STATUS, false, s, "\x05" "STATUS         ");
+    assert_render(ITEM_ABOUT, false, s, "\x05" "ABOUT          ");
 }
 
-static void test_status_edit_shows_ip_or_state(void) {
+// Click opens on the IP page; page 0 mirrors the WiFi state when not connected.
+static void test_about_page0_ip_and_states(void) {
     UiSnapshot s = make_snapshot();
+    UiOutput out = make_output();
+    item(ITEM_ABOUT)->on_click(s, out);  // opens on page 0
     s.net = UiNetState::Connected;
     strcpy(s.ip, "192.168.1.42");
-    assert_render(ITEM_STATUS, true, s, "192.168.1.42    ");
+    assert_render(ITEM_ABOUT, true, s, "192.168.1.42    ");
     s.ip[0] = '\0';
-    assert_render(ITEM_STATUS, true, s, "NO IP           ");
+    assert_render(ITEM_ABOUT, true, s, "NO IP           ");
     s.net = UiNetState::Connecting;
-    assert_render(ITEM_STATUS, true, s, "WIFI CONNECTING ");
+    assert_render(ITEM_ABOUT, true, s, "WIFI CONNECTING ");
     s.net = UiNetState::Portal;
-    assert_render(ITEM_STATUS, true, s, "AP 192.168.4.1  ");
+    assert_render(ITEM_ABOUT, true, s, "AP 192.168.4.1  ");
 }
 
-static void test_status_click_and_dismiss(void) {
+// Rotation pages to the firmware version and wraps back (2 pages); it never
+// leaves edit, and edit_subscreen() tracks the page for the FSM crossfade.
+static void test_about_rotation_pages_to_version(void) {
+    UiSnapshot s = make_snapshot();  // version fixture "1.2.3"
+    UiOutput out = make_output();
+    item(ITEM_ABOUT)->on_click(s, out);
+    TEST_ASSERT_EQUAL_INT(0, (int)item(ITEM_ABOUT)->edit_subscreen());
+    TEST_ASSERT_TRUE(item(ITEM_ABOUT)->edit_step(1, s, out));  // -> version
+    TEST_ASSERT_EQUAL_INT(1, (int)item(ITEM_ABOUT)->edit_subscreen());
+    assert_render(ITEM_ABOUT, true, s, "VER 1.2.3       ");
+    TEST_ASSERT_TRUE(item(ITEM_ABOUT)->edit_step(1, s, out));  // wraps to page 0
+    TEST_ASSERT_EQUAL_INT(0, (int)item(ITEM_ABOUT)->edit_subscreen());
+}
+
+static void test_about_click_dismisses_read_only(void) {
     UiSnapshot s = make_snapshot();
     UiOutput out = make_output();
     TEST_ASSERT_EQUAL_INT((int)MenuItem::ClickResult::EnterEdit,
-                          (int)item(ITEM_STATUS)->on_click(s, out));
-    TEST_ASSERT_EQUAL_INT(0, out.effect_count);
-    // Any rotation dismisses (false = leave edit); a click also dismisses.
-    TEST_ASSERT_FALSE(item(ITEM_STATUS)->edit_step(1, s, out));
-    TEST_ASSERT_TRUE(item(ITEM_STATUS)->edit_click(s, out));
-    TEST_ASSERT_EQUAL_INT(0, out.effect_count);  // read-only: never persists
-    TEST_ASSERT_EQUAL_INT((int)UI_STATUS_SHOW_US,
-                          (int)item(ITEM_STATUS)->edit_timeout_us());
+                          (int)item(ITEM_ABOUT)->on_click(s, out));
+    TEST_ASSERT_TRUE(item(ITEM_ABOUT)->edit_click(s, out));  // click leaves edit
+    TEST_ASSERT_EQUAL_INT(0, out.effect_count);              // read-only: no persist
 }
 
 static void test_wifi_reset_render(void) {
@@ -293,9 +305,10 @@ int main(int, char**) {
     RUN_TEST(test_cycle_render_highlighted);
     RUN_TEST(test_cycle_edit_step_commit);
     RUN_TEST(test_cycle_edit_wraps_backward);
-    RUN_TEST(test_status_render_highlighted);
-    RUN_TEST(test_status_edit_shows_ip_or_state);
-    RUN_TEST(test_status_click_and_dismiss);
+    RUN_TEST(test_about_render_highlighted);
+    RUN_TEST(test_about_page0_ip_and_states);
+    RUN_TEST(test_about_rotation_pages_to_version);
+    RUN_TEST(test_about_click_dismisses_read_only);
     RUN_TEST(test_wifi_reset_render);
     RUN_TEST(test_wifi_reset_arm_cancel_confirm);
     RUN_TEST(test_exit_render_and_click);

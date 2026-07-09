@@ -39,6 +39,7 @@ inline UiSnapshot make_snapshot() {
     s.weather_age_s = 300;
     s.net = UiNetState::Connected;
     strcpy(s.ap_ssid, "VFD-ABCD");
+    strcpy(s.version, "1.2.3");  // fixture firmware version (ABOUT page)
     s.bright = 128;
     s.use24h = true;
     static const char* const TZ_NAMES[] = {"UTC", "PARIS", "TOKYO"};

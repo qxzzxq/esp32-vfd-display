@@ -7,6 +7,7 @@
 #include "VFDDisplay.h"
 #include "driver/gpio.h"
 #include "encoder.h"
+#include "esp_app_desc.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -65,6 +66,7 @@ static UiSnapshot build_snapshot() {
     }
     net_get_ap_ssid(s.ap_ssid);
     net_get_ip(s.ip);
+    strlcpy(s.version, esp_app_get_description()->version, sizeof(s.version));
 
     Settings st = settings_get();
     s.has_location = st.lat[0] != '\0' && st.lon[0] != '\0';

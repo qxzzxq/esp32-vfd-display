@@ -8,12 +8,12 @@
 // One settings-menu entry. Each item owns its full behavior — rendering in
 // both highlighted and editing states, what a click does, and how rotation
 // behaves while editing — so UiFsm needs almost no per-item knowledge (the
-// lone exception is edit_timeout_us, the self-dismissing STATUS overlay).
+// lone exception is edit_subscreen, which lets ABOUT's pages crossfade).
 //
 // "Editing" is item-defined: a value edit for BRIGHT/24H/TZ/CYCLE, a
-// confirm-armed state for WIFI RESET, a transient read-only overlay for
-// STATUS. The base implementations are the no-op item (EXIT-style): click does
-// nothing special, edit ops immediately hand back to the menu.
+// confirm-armed state for WIFI RESET, a paged read-only overlay for ABOUT. The
+// base implementations are the no-op item (EXIT-style): click does nothing
+// special, edit ops immediately hand back to the menu.
 class MenuItem {
   public:
     // What the FSM should do after a click on the highlighted item.
@@ -42,11 +42,11 @@ class MenuItem {
     // side effects (BRIGHT: restore the saved brightness). Nothing to persist.
     virtual void edit_abort(const UiSnapshot&, UiOutput&) {}
 
-    // Auto-return timeout while editing, in microseconds; 0 = none (the item
-    // relies on the global menu inactivity timeout that drops to the pages).
-    // STATUS returns UI_STATUS_SHOW_US for a self-dismissing read-only display
-    // that pops back to its menu item after this long instead of to the pages.
-    virtual int64_t edit_timeout_us() const { return 0; }
+    // Sub-screen index while editing; folded into UiFsm::screen_id so an item
+    // with several edit pages crossfades between them (ABOUT: IP vs version).
+    // Default 0 keeps value edits (BRIGHT/TZ/CYCLE) on the menu item's screen id
+    // so entering edit and previewing a value never fade.
+    virtual uint8_t edit_subscreen() const { return 0; }
 
   protected:
     ~MenuItem() = default;  // never deleted via base pointer
