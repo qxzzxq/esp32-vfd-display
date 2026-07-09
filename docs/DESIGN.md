@@ -43,6 +43,13 @@ own their data and expose copy-out getters — no global state struct, no cross-
 - **`settings.{h,cpp}`** — NVS-backed `Settings` struct + static timezone table
   (~12–15 entries: display name ≤10 chars + POSIX TZ string). `settings_get()` (copy under
   mutex), `settings_save()` (diff-write keys, re-apply `setenv("TZ")+tzset()`).
+  **DST is automatic:** each table entry carries the full POSIX DST rule
+  (e.g. `CET-1CEST,M3.5.0,M10.5.0/3`), not a fixed offset. The RTC is kept in
+  UTC, so `localtime_r()` (called fresh each render tick) re-derives whether DST
+  is currently active from the rule — the clock shifts by an hour at the
+  transition with no dedicated code, and zones without DST (UTC, `CST-8`,
+  `JST-9`) simply omit the rule. Caveat: the rules are hardcoded, so a region
+  changing its DST policy needs a firmware update (no live tz database on device).
 - **`sensors.{h,cpp}`** — I2C master (`esp_driver_i2c`, `i2c_master.h`) + minimal AHT20 and
   BMP280 drivers. `sensors_read()` blocking ~90 ms, called only by the worker task;
   `sensors_get(&tC, &rh, &hPa)` returns false if never read / last read failed.
