@@ -136,18 +136,24 @@ seamless — patch `font5x7.cpp` by eye if a glyph pops).
   hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
   (returning to the pages snaps). The roll target is recomputed live each tick, so a
   second flipping mid-roll retargets in flight.
-- **Page-transition crossfade** (`UI_FADE_HALF_US`): every page change dims the outgoing
-  page to black over 300 ms via the driver's dimming register (`setBrightness`, 240-level
-  duty; 0 = 0/255 duty = fully dark), swaps the line at black, then dims the incoming page
-  back to the saved brightness over another 300 ms. Driven by `SetBrightness` effects at
-  the 30 ms tick and using **no CGRAM**, so unlike the roll it animates a whole 16-cell
-  page. Applies to manual steps, the CUSTOM message jump, and unavailable-page auto-advance
-  alike. Two protected phases (`FadeState`): the dim-**out** always runs to completion — a
-  page change during it only *retargets* which page dims in, never restarting it — while
-  the dim-**in** is interruptible, a page change restarting it from black for the new page.
-  So a fast scrub shows the first page dim fully out, then each subsequent page rise from 0
-  (never the previous one snapping back to full). An overlay (hold bar / portal / menu)
-  taking over ends the fade and restores brightness so it never renders dim.
+- **Screen-transition crossfade** (`UI_FADE_HALF_US`): every change of rendered *screen*
+  dims the outgoing screen to black over 90 ms via the driver's dimming register
+  (`setBrightness`, 240-level duty; 0 = 0/255 duty = fully dark), swaps the line at black,
+  then dims the incoming screen back to the saved brightness over another 90 ms. Driven by
+  `SetBrightness` effects at the 30 ms tick and using **no CGRAM**, so unlike the roll it
+  animates a whole 16-cell line. The half-period is a multiple of the 30 ms tick so a frame
+  lands exactly on the black midpoint (else the swap would render while faintly lit). A
+  button edge snaps an in-flight fade to full brightness, so a click always acts on a
+  fully-shown screen and BRIGHT's live preview isn't overridden by the fade. A "screen" is the identity `UiFsm::screen_id` returns —
+  page number, menu item, the hold bar, or the portal banner — so it crossfades page steps,
+  the CUSTOM jump/auto-advance, menu enter/exit, and menu item navigation, but *not*
+  same-screen animated content (the hold-bar fill, portal banner alternation, marquee, or a
+  TIME roll). Menu and Edit share an id so entering edit (and its live brightness preview)
+  doesn't fade. Two protected phases (`FadeState`): the dim-**out** always runs to
+  completion — a screen change during it only *retargets* which screen dims in, never
+  restarting — while the dim-**in** is interruptible, a screen change restarting it from
+  black for the new screen. So a fast scrub dims the first screen fully out, then each
+  subsequent one rises from 0 (never the previous snapping back to full).
 
 **Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
 pauses auto-cycle for 30 s):
