@@ -69,6 +69,16 @@ struct UiOutput {
     // the shell pauses ~200 ms after drawing so the full bar registers before
     // the new mode renders. Pacing only — no device state involved.
     bool hold_fired;
+    // An animation (roll or visible hold bar) is in flight: the shell
+    // shortens its render tick from 100 ms to 40 ms while set.
+    bool animating;
+    // Desired CGRAM contents for slots 1..7, fully specified every tick
+    // ([0] is unused — code 0x00 can't appear in the NUL-terminated line).
+    // Idle ticks carry the static bar/arrow glyphs; an active roll overwrites
+    // slots with per-frame composites. The shell diffs against its cache and
+    // uploads only changes, which also restores the static glyphs after a
+    // roll borrowed their slots.
+    uint8_t glyphs[8][5];
     uint8_t effect_count;
     UiEffect effects[4];  // fixed capacity; the worst real tick emits one
 
@@ -87,5 +97,26 @@ constexpr int64_t UI_LONG_PRESS_US = 1000 * 1000LL;
 // render ticks reveal the partial-cell CGRAM glyphs in between.
 constexpr int64_t UI_HOLD_SHOW_US = 500 * 1000LL;
 constexpr int UI_HOLD_BAR_SEGS = 5;
+
+// Vertical roll animation (split-flap) for opted-in content changes (TIME
+// ticks): a cell travels its 7 rows plus one blank gap row, one row per
+// 30 ms step = 240 ms per roll, all changed cells in lockstep. Cells rolling
+// the same chars share a CGRAM slot (see UiFsm::apply_transition). Page changes
+// crossfade instead of rolling (UI_FADE_HALF_US) — 16 cells need more
+// simultaneous composites than the 8-glyph CGRAM can hold.
+constexpr int UI_ROLL_STEPS = 8;  // 7 rows + 1 gap row of travel (geometry, not timing)
+// Per-step time; UI_ROLL_STEPS * this = total roll. Kept equal to the shell's animation
+// tick (src/ui.cpp UI_TICK_ANIM_MS) so exactly one step renders per frame, and a multiple
+// of the 10 ms FreeRTOS tick so frames land evenly.
+constexpr int64_t UI_ROLL_STEP_US = 30 * 1000LL;
+
+// Dimming crossfade for page transitions, one half-period per phase. The
+// outgoing page dims saved-level -> 0 (Out), the DCRAM content swaps at black,
+// then the incoming page dims 0 -> saved-level (In). Driven by SetBrightness
+// effects at the 40 ms tick; touches no CGRAM, so unlike the roll it animates
+// a whole 16-cell page change (which is why the roll page-transition was
+// dropped). Out always completes; a page change mid-In restarts In from black
+// (see UiFsm::FadeState).
+constexpr int64_t UI_FADE_HALF_US = 300 * 1000LL;  // per direction; 0.6 s total
 
 #endif

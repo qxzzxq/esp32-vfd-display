@@ -9,7 +9,9 @@
 // 0x01..0x07.
 //
 // Bar cells encode their fill in the code itself: code n = n lit columns
-// (n = 1..4). A fully lit cell is the CGROM solid block 0x7F — no slot spent.
+// (n = 1..4); code 0x06 is a fully lit cell. (0x7F — the 8-MD-06INKM CGROM
+// solid block — is blank on the 16-SD-13GINK, so the full cell is a CGRAM
+// glyph too rather than a CGROM char.)
 //
 // The shell uploads UI_GLYPHS after VFDDisplay::init() (controller reset
 // clears CGRAM). Column format: 5 bytes left->right, bit0 = top pixel,
@@ -17,7 +19,7 @@
 
 #include <stdint.h>
 
-constexpr char UI_GLYPH_BAR_FULL = '\x7F';  // CGROM solid block
+constexpr char UI_GLYPH_BAR_FULL = '\x06';  // CGRAM solid block (slot 6)
 constexpr char UI_GLYPH_ARROW = '\x05';     // menu cursor
 
 struct UiGlyphDef {
@@ -31,13 +33,14 @@ constexpr UiGlyphDef UI_GLYPHS[] = {
     {3, {0x7F, 0x7F, 0x7F, 0x00, 0x00}},  // bar, 3 columns
     {4, {0x7F, 0x7F, 0x7F, 0x7F, 0x00}},  // bar, 4 columns
     {5, {0x7F, 0x3E, 0x1C, 0x08, 0x00}},  // solid right arrow
+    {6, {0x7F, 0x7F, 0x7F, 0x7F, 0x7F}},  // full bar cell (solid block)
 };
 
 constexpr int UI_GLYPH_COUNT = sizeof(UI_GLYPHS) / sizeof(UI_GLYPHS[0]);
 
-// Compile-time sanity: slot must equal index + 1 (bar code == lit-column
-// count, which render_hold_bar relies on; also forces unique codes 1..7),
-// and no column byte may set bit7.
+// Compile-time sanity: slot must equal index + 1 (so codes 0x01..0x04 equal
+// their lit-column count, which render_hold_bar relies on; also forces unique
+// codes 1..7), and no column byte may set bit7.
 constexpr bool ui_glyphs_valid() {
     if (UI_GLYPH_COUNT > 7) return false;
     for (int i = 0; i < UI_GLYPH_COUNT; i++) {

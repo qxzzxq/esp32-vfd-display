@@ -1,6 +1,7 @@
 #include "ui.h"
 
 #include <string.h>
+#include <sys/time.h>
 #include <time.h>
 
 #include "VFDDisplay.h"
@@ -13,7 +14,6 @@
 #include "sensors.h"
 #include "settings.h"
 #include "ui/fsm.h"
-#include "ui/glyphs.h"
 #include "ui/menu_items.h"
 #include "ui/pages.h"
 #include "weather.h"
@@ -29,7 +29,8 @@
 #define VFD_CLK GPIO_NUM_7
 #define VFD_DIN GPIO_NUM_21
 
-#define UI_TICK_MS 100  // render tick while idle
+#define UI_TICK_MS 100      // render tick while idle
+#define UI_TICK_ANIM_MS 30  // render tick while animating; = UI_ROLL_STEP_US (one step/frame)
 
 // System time is bogus (starts at 1970) until SNTP sets it (M4).
 #define MIN_VALID_EPOCH 1609459200  // 2021-01-01
@@ -93,23 +94,51 @@ static void execute_effect(const UiEffect& e) {
 }
 
 void ui_run() {
+    // Single-core C3: keep this UI task above the net worker (prio 3, net.cpp)
+    // so render bursts preempt its CPU-heavy work (TLS on the first weather
+    // fetch) instead of stalling animation frames — otherwise a roll drops its
+    // tail frames and finishes with a stutter during the post-boot network
+    // burst. The UI blocks on the encoder queue between frames, so the worker
+    // still gets essentially all the CPU.
+    vTaskPrioritySet(nullptr, 4);
+
     s_vfd.init();
     s_vfd.clear();
     s_vfd.setBrightness(settings_get().bright);
-    // Controller reset cleared CGRAM; load the bar/arrow glyphs the core
-    // embeds in its lines (see src/ui/glyphs.h for the slot contract).
-    for (int i = 0; i < UI_GLYPH_COUNT; i++)
-        s_vfd.setCustomChar(UI_GLYPHS[i].slot, UI_GLYPHS[i].cols);
 
     uint8_t page_count = 0, item_count = 0;
     UiPage* const* pages = ui_pages(&page_count);
     MenuItem* const* items = ui_menu_items(&item_count);
     UiFsm fsm(pages, page_count, items, item_count);
-    UiOutput out;
+    UiOutput out = {};
+
+    // Per-slot cache of what CGRAM currently holds. Invalid at boot
+    // (controller reset cleared CGRAM), so the first tick uploads the core's
+    // desired glyphs; afterwards only diffs go over SPI — which also restores
+    // the bar/arrow glyphs after a roll animation borrowed their slots.
+    uint8_t cgram[8][5];
+    uint8_t cgram_valid = 0;  // bitmask by slot
 
     while (1) {
+        // While idle, wake at the next whole second instead of on a blind
+        // UI_TICK_MS grid, so a seconds change on the TIME page is noticed on
+        // the beat and its roll starts within one FreeRTOS tick of the second
+        // (not up to UI_TICK_MS late, which jitters second to second). Capped
+        // at UI_TICK_MS so sensors/net/menu-timeout still get serviced, and
+        // floored at one tick so we never busy-spin just before the boundary.
+        uint32_t wait_ms;
+        if (out.animating) {
+            wait_ms = UI_TICK_ANIM_MS;
+        } else {
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            uint32_t to_next_ms = (uint32_t)((1000000 - tv.tv_usec) / 1000);
+            wait_ms = to_next_ms < UI_TICK_MS ? to_next_ms : UI_TICK_MS;
+            if (wait_ms < portTICK_PERIOD_MS) wait_ms = portTICK_PERIOD_MS;
+        }
+
         EncEvent ev;
-        bool got = encoder_wait(&ev, pdMS_TO_TICKS(UI_TICK_MS));
+        bool got = encoder_wait(&ev, pdMS_TO_TICKS(wait_ms));
         int64_t now_us = esp_timer_get_time();
 
         UiInput in = UiInput::None;
@@ -125,6 +154,15 @@ void ui_run() {
         UiSnapshot snap = build_snapshot();
         fsm.tick(in, now_us, snap, &out);
 
+        // CGRAM before DCRAM so a line never references a stale glyph.
+        for (int slot = 1; slot <= 7; slot++) {
+            if ((cgram_valid & (1u << slot)) &&
+                memcmp(cgram[slot], out.glyphs[slot], 5) == 0)
+                continue;
+            s_vfd.setCustomChar(slot, out.glyphs[slot]);
+            memcpy(cgram[slot], out.glyphs[slot], 5);
+            cgram_valid |= 1u << slot;
+        }
         s_vfd.writeString(0, out.line);
 
         // A long-press just fired and the completed hold bar was drawn; let it

@@ -43,8 +43,9 @@ AHT20/BMP280), `weather` (Open-Meteo + cJSON), `net` (WiFi STA/portal, SNTP, wor
 host-tested core in `src/ui/`: UiFsm + pages + menu items), plus the existing `VFDDisplay`
 driver (extended only with `setCustomChar` for CGRAM glyphs — see `src/ui/glyphs.h`).
 
-Concurrency: UI task (= app_main) blocks on the encoder queue with a 100 ms render tick and
-is the **only** task that touches the VFD; a worker task in `net.cpp` polls sensors (10 s)
+Concurrency: UI task (= app_main) blocks on the encoder queue with a 100 ms render tick
+(30 ms while an animation runs) and is the **only** task that touches the VFD; a worker
+task in `net.cpp` polls sensors (10 s)
 and weather (15 min). Every screen is 16 uppercase ASCII chars.
 
 ## Conventions

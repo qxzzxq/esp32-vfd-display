@@ -6,14 +6,18 @@
 #include "fsm.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "glyphs.h"
 #include "pages.h"
+#include "roll.h"
 
 void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out) {
     out->line[0] = '\0';
     out->hold_fired = false;
+    out->animating = false;
     out->effect_count = 0;
+    default_glyphs(out);
 
     // Mutable per-tick view: a committing item writes its new value here so
     // the render below shows it immediately, one tick before the shell's
@@ -21,6 +25,9 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
     UiSnapshot view = s;
 
     if (in != UiInput::None) {
+        // Any input snaps an in-flight roll to its target before dispatch,
+        // so what the user acts on is what the display settles to.
+        roll_.active = false;
         last_input_us_ = now_us;
         switch (in) {
             case UiInput::StepCW: handle_step(1, view, *out); break;
@@ -61,6 +68,26 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
     }
 
     render(out->line, now_us, view);
+
+    // Animate only un-overlaid Pages-mode content; any other frame (menu, hold
+    // bar, portal banner) invalidates the from state so the first pages frame
+    // afterwards snaps instead of animating from stale content. A crossfade
+    // caught by an overlay is ended here with brightness restored, so the
+    // overlay never renders dim.
+    bool hold_visible =
+        press_start_us_ >= 0 && now_us - press_start_us_ >= UI_HOLD_SHOW_US;
+    if (mode_ == Mode::Pages && !hold_visible && view.net != UiNetState::Portal) {
+        apply_transition(out->line, now_us, view.bright, out);
+    } else {
+        roll_.active = false;
+        if (fade_.phase != FadeState::Phase::Idle) {
+            fade_.phase = FadeState::Phase::Idle;
+            out->emit(UiEffect::Type::SetBrightness, view.bright);
+        }
+        prev_page_ = 0xFF;
+    }
+    out->animating =
+        roll_.active || fade_.phase != FadeState::Phase::Idle || hold_visible;
 
     // Long-press fires while still held: from the pages it opens the menu,
     // from the menu it escapes. render() has just drawn the completed bar
@@ -148,9 +175,9 @@ void UiFsm::render_hold_bar(char line[17], int64_t held_us) const {
         bar[i] = lit == 0 ? ' ' : lit == 5 ? UI_GLYPH_BAR_FULL : (char)lit;
     }
     bar[UI_HOLD_BAR_SEGS] = '\0';
-    // Label on the left, bracketed bar flush with the right edge; the
-    // computed pad keeps the full 16 chars written for any segment count.
-    snprintf(line, 17, "%-*s[%s]", 16 - (UI_HOLD_BAR_SEGS + 2),
+    // Label on the left, bar flush with the right edge; the computed pad keeps
+    // the full 16 chars written for any segment count.
+    snprintf(line, 17, "%-*s%s", 16 - UI_HOLD_BAR_SEGS,
              mode_ == Mode::Pages ? "MENU" : "EXIT", bar);
 }
 
@@ -160,4 +187,118 @@ void UiFsm::render_portal_banner(char line[17], int64_t now_us, const UiSnapshot
         snprintf(line, 17, "SETUP  %-9s", s.ap_ssid);
     else
         snprintf(line, 17, "AP 192.168.4.1  ");
+}
+
+void UiFsm::default_glyphs(UiOutput* out) {
+    memset(out->glyphs, 0, sizeof(out->glyphs));
+    for (int i = 0; i < UI_GLYPH_COUNT; i++)
+        memcpy(out->glyphs[UI_GLYPHS[i].slot], UI_GLYPHS[i].cols, 5);
+}
+
+void UiFsm::apply_transition(char line[17], int64_t now_us, uint8_t bright,
+                             UiOutput* out) {
+    // A page change crossfades; an opted-in same-page content change (TIME
+    // second tick) rolls. The crossfade has two protected phases: the outgoing
+    // page always dims fully out (a page change mid-dim-out only retargets the
+    // page that will dim in), then the incoming page dims in (a page change
+    // mid-dim-in restarts it from black for the new page). The roll can't span
+    // a whole page (7-slot CGRAM), so page changes never roll.
+    using Phase = FadeState::Phase;
+    if (prev_page_ != 0xFF && page_ != prev_page_) {
+        if (fade_.phase == Phase::In) {
+            fade_.start_us = now_us;  // interrupt: dim the new page in from black
+        } else if (fade_.phase == Phase::Idle) {
+            roll_.active = false;     // settled: dim the outgoing page out first
+            fade_.phase = Phase::Out;
+            fade_.start_us = now_us;
+            memcpy(fade_.from, prev_content_, 17);
+        }
+        // phase == Out: keep dimming the same page out; this step just retargets.
+    } else if (prev_page_ != 0xFF && fade_.phase == Phase::Idle && !roll_.active &&
+               pages_[page_]->rolls_on_change() && strcmp(line, prev_content_) != 0) {
+        roll_.active = true;
+        roll_.start_us = now_us;
+        memcpy(roll_.from, prev_content_, 17);
+    }
+    prev_page_ = page_;
+    memcpy(prev_content_, line, 17);  // always the logical (incoming) target
+
+    if (fade_.phase != Phase::Idle) {
+        apply_fade(line, now_us, bright, out);
+        return;
+    }
+    if (!roll_.active) return;
+
+    int64_t elapsed = now_us - roll_.start_us;
+    int k = elapsed <= 0 ? 0 : (int)(elapsed / UI_ROLL_STEP_US);
+    if (k >= UI_ROLL_STEPS) {
+        roll_.active = false;  // line already holds the target
+        return;
+    }
+    // Composite the roll over the target. Slots are keyed by the pair of
+    // *visible* chars — the from glyph is on screen only while k <= 6, the
+    // to glyph only once k >= 2 — so cells rolling the same chars share one
+    // slot (their composites are identical at equal k). Slots are
+    // reallocated left->right every frame (stateless; the shell diff-uploads
+    // changes). If distinct keys ever exceed the 7 slots (> 7 distinct
+    // pairs, e.g. the 24H format flip), the excess cells hold the old char
+    // and flip to the new at the midpoint.
+    char key_from[7], key_to[7];
+    int pairs = 0;
+    for (int i = 0; i < 16; i++) {
+        if (roll_.from[i] == line[i]) continue;
+        if (k == 0) {
+            line[i] = roll_.from[i];  // trigger frame: not moving yet
+            continue;
+        }
+        char ef = k <= 6 ? roll_.from[i] : ' ';
+        char et = k >= UI_ROLL_STEPS - 6 ? line[i] : ' ';
+        if (ef == ' ' && et == ' ') {
+            line[i] = ' ';  // both glyphs out of the window
+            continue;
+        }
+        int p = 0;
+        while (p < pairs && !(key_from[p] == ef && key_to[p] == et)) p++;
+        if (p == pairs) {
+            if (pairs == 7) {  // out of slots: coarse midpoint flip
+                if (k * 2 < UI_ROLL_STEPS) line[i] = roll_.from[i];
+                continue;
+            }
+            key_from[p] = ef;
+            key_to[p] = et;
+            ui_roll_composite(ef, et, k, out->glyphs[p + 1]);
+            pairs++;
+        }
+        line[i] = (char)(p + 1);
+    }
+}
+
+void UiFsm::apply_fade(char line[17], int64_t now_us, uint8_t bright,
+                       UiOutput* out) {
+    // Each phase ramps brightness across UI_FADE_HALF_US, scaling the saved
+    // level so the fade honours the current BRIGHT setting.
+    using Phase = FadeState::Phase;
+    int64_t elapsed = now_us - fade_.start_us;
+    if (fade_.phase == Phase::Out) {
+        if (elapsed < UI_FADE_HALF_US) {
+            memcpy(line, fade_.from, 17);  // outgoing page, dimming out
+            out->emit(UiEffect::Type::SetBrightness,
+                      (uint8_t)((int64_t)bright * (UI_FADE_HALF_US - elapsed) /
+                                UI_FADE_HALF_US));
+            return;
+        }
+        // Dim-out done: hand off to the dim-in of the incoming page (in line),
+        // carrying any overshoot so the envelope stays continuous.
+        fade_.phase = Phase::In;
+        fade_.start_us += UI_FADE_HALF_US;
+        elapsed = now_us - fade_.start_us;
+    }
+    // Phase::In — line already holds the incoming page.
+    if (elapsed >= UI_FADE_HALF_US) {
+        fade_.phase = Phase::Idle;
+        out->emit(UiEffect::Type::SetBrightness, bright);  // restore saved level
+        return;
+    }
+    out->emit(UiEffect::Type::SetBrightness,
+              (uint8_t)((int64_t)bright * elapsed / UI_FADE_HALF_US));
 }

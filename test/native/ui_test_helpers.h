@@ -83,6 +83,31 @@ struct FsmDriver {
         return out;
     }
 
+    // Advance through n idle ticks of an arbitrary step (animation frames run
+    // at the shell's 30 ms cadence; 30 ms == UI_ROLL_STEP_US, one step/frame).
+    const UiOutput& idle_us(int64_t step_us, int n = 1) {
+        for (int i = 0; i < n; i++) {
+            now_us += step_us;
+            fsm.tick(UiInput::None, now_us, snap, &out);
+        }
+        return out;
+    }
+
+    // Fine-step until the current animation finishes (bounded; a full roll
+    // is 9 frames at 30 ms, a full crossfade 20).
+    const UiOutput& settle(int max_ticks = 64) {
+        for (int i = 0; i < max_ticks && out.animating; i++) idle_us(30000);
+        return out;
+    }
+
+    // Send a Pages-mode navigation input and settle the crossfade it starts,
+    // landing on the destination page. Navigation tests care about the target,
+    // not the transition frames (those are pinned in test_ui_fade).
+    const UiOutput& step(UiInput in) {
+        feed(in);
+        return settle();
+    }
+
     // Short click: press, then release one tick (100 ms) later.
     const UiOutput& click() {
         feed(UiInput::BtnDown);

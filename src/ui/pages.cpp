@@ -27,6 +27,7 @@ class TimePage : public UiPage {
                      s.tm_now.tm_sec, s.tm_now.tm_hour < 12 ? 'A' : 'P');
         }
     }
+    bool rolls_on_change() const override { return true; }
 };
 
 class DatePage : public UiPage {

@@ -59,20 +59,26 @@ own their data and expose copy-out getters — no global state struct, no cross-
   (copy-out `web_get_message()`).
 - **`ui.{h,cpp}`** — thin platform shell: owns the `VFDDisplay` instance and the encoder
   loop, builds the per-tick `UiSnapshot` from the producer modules, draws the line the
-  core returns, and executes the returned `UiEffect`s. `ui_run()` never returns.
+  core returns (uploading changed CGRAM glyphs first, against a per-slot cache), and
+  executes the returned `UiEffect`s. `ui_run()` never returns.
 - **`ui/` (pure UI core)** — host-testable UI logic: `UiFsm` (Pages/Menu/Edit modes,
-  click vs long-press recognition, menu timeout, overlay priority) plus the `UiPage` /
-  `MenuItem` interfaces and their concrete singletons. Libc includes only — no
-  ESP-IDF/FreeRTOS/project headers. Consumes a per-tick `UiSnapshot` built by the shell,
-  returns the 16-char line + `UiEffect` list.
+  click vs long-press recognition, menu timeout, overlay priority, roll animations) plus
+  the `UiPage` / `MenuItem` interfaces and their concrete singletons. Libc includes only —
+  no ESP-IDF/FreeRTOS/project headers. Consumes a per-tick `UiSnapshot` built by the
+  shell, returns the 16-char line + desired CGRAM contents per slot + `UiEffect` list.
 - **`main.cpp`** — boot: `nvs_flash_init` → `settings_init` → boot-hold check on GPIO20
   (3 s low → force portal) → `encoder_init` → `sensors_init` → `net_init(force)` → `ui_run()`.
 
 ## Task / concurrency model
 
-- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, 100 ms)`; event → input
-  handling, timeout → re-render (clock seconds, edit-mode blink, marquee, auto-cycle).
-  Only this task touches the VFD.
+- **UI task** = the `app_main` task. Loop: `encoder_wait(ev, idle — 30 ms while a roll or
+  the hold bar animates)`; event → input handling, timeout → re-render (clock seconds,
+  edit-mode blink, marquee, auto-cycle). The idle wait is normally 100 ms but is shortened
+  to land on the next whole second, so the TIME roll starts on the beat rather than up to
+  100 ms late (aligned via `gettimeofday`, floored at one FreeRTOS tick). Only this task
+  touches the VFD. Runs at prio 4 — above the worker (below) — so on the single-core C3 its
+  brief render bursts preempt the worker's CPU-heavy TLS instead of stalling animation
+  frames during the post-boot network burst.
 - **Worker task** (in `net.cpp`, prio 3, 8 KB stack — the in-task TLS handshake of
   `weather_fetch` peaks ~5 KB): 1 s loop; sensors every 10 s;
   weather every 15 min when Connected and lat/lon set (retry after 2 min on failure,
@@ -97,12 +103,51 @@ VFD symbols missing from this tube's CGROM:
 | Code | Glyph |
 |------|-------|
 | 0x01–0x04 | progress-bar cell, code = lit columns (1–4) |
-| 0x7F | full bar cell (CGROM solid block — no slot spent) |
 | 0x05 | solid right arrow (menu cursor) |
-| 0x06–0x07 | free (reserved for the roll animations) |
+| 0x06 | full bar cell (solid block) — CGROM 0x7F is blank on this tube, so it's a CGRAM glyph |
+| 0x07 | unassigned when idle |
+
+The core emits the desired contents of all 7 slots in every `UiOutput`; the shell
+diff-uploads against a per-slot cache (first tick populates CGRAM, later ticks only send
+changes). During a roll animation the core freely overwrites any of the 7 slots with
+per-frame composites — the diff-upload restores the bar/arrow patterns afterwards.
 
 In this document's screen mockups, `>` stands for the arrow glyph and `=` for bar-fill
 blocks.
+
+**Animations** (pure core: `src/ui/font5x7.*`, `roll.*`, roll and fade state in `UiFsm`).
+Two kinds: a vertical split-flap **roll** for same-page content changes, and a dimming
+**crossfade** for page changes. The roll travels a cell's old glyph out through the top
+while the new one enters from below (one blank gap row between them), 8 steps × 30 ms =
+240 ms, all changed cells in lockstep, composited into CGRAM from an embedded 5×7 font
+(full printable ASCII; shapes match the CGROM so the hand-off at the roll's end is
+seamless — patch `font5x7.cpp` by eye if a glyph pops).
+
+- **Roll trigger**: same-page content changes for pages opting in via
+  `UiPage::rolls_on_change()` — TIME only (seconds tick, rollovers); other pages and the
+  CUSTOM marquee deliberately don't animate. Page *changes* don't roll — a page-transition
+  roll was tried and dropped (16 cells need more simultaneous composites than the 8-glyph
+  CGRAM can hold, and a partially-animated line reads as broken); they crossfade instead.
+- **Slot budget**: CGRAM slots are keyed by the visible old→new chars, so cells rolling
+  the same chars share one slot (a `11:11:11 → 22:22:22` rollover uses a single slot for
+  all six digits). With > 7 distinct pairs (only the 24H format flip in practice) the
+  excess cells hold the old char and flip at the midpoint.
+- **Roll interactions**: any input snaps the roll to its target before it is processed; the
+  hold bar, portal banner, and menu render un-animated and invalidate the roll-from state
+  (returning to the pages snaps). The roll target is recomputed live each tick, so a
+  second flipping mid-roll retargets in flight.
+- **Page-transition crossfade** (`UI_FADE_HALF_US`): every page change dims the outgoing
+  page to black over 300 ms via the driver's dimming register (`setBrightness`, 240-level
+  duty; 0 = 0/255 duty = fully dark), swaps the line at black, then dims the incoming page
+  back to the saved brightness over another 300 ms. Driven by `SetBrightness` effects at
+  the 30 ms tick and using **no CGRAM**, so unlike the roll it animates a whole 16-cell
+  page. Applies to manual steps, the CUSTOM message jump, and unavailable-page auto-advance
+  alike. Two protected phases (`FadeState`): the dim-**out** always runs to completion — a
+  page change during it only *retargets* which page dims in, never restarting it — while
+  the dim-**in** is interruptible, a page change restarting it from black for the new page.
+  So a fast scrub shows the first page dim fully out, then each subsequent page rise from 0
+  (never the previous one snapping back to full). An overlay (hold bar / portal / menu)
+  taking over ends the fade and restores brightness so it never renders dim.
 
 **Pages** (CW = next, CCW = previous, wraps; auto-cycle skips empty CUSTOM; any input
 pauses auto-cycle for 30 s):
@@ -117,7 +162,7 @@ pauses auto-cycle for 30 s):
 | 6 | PRESSURE | `PRES 1013.2 hPa `   | page omitted if BMP280 probe failed (bonus page) |
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
-while held; `MENU     [==   ]` progress bar appears after 0.5 s) = enter menu. Click on
+while held; `MENU       ==   ` progress bar appears after 0.5 s) = enter menu. Click on
 the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
 `WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
 
@@ -125,7 +170,7 @@ the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
 immediate `settings_save` + live apply; 20 s inactivity or long-press = exit to pages
 (abandons an uncommitted edit). Holding the button shows a progress bar after 0.5 s
-(`EXIT     [==   ]`) and the exit fires at 1.0 s while still held. The bar fill is
+(`EXIT       ==   `) and the exit fires at 1.0 s while still held. The bar fill is
 column-granular (5 cells × 5 columns over the 500 ms window; at the 100 ms idle tick it
 advances one full cell per render — finer ticks reveal the partial-cell glyphs).
 
@@ -269,8 +314,10 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   cleared.
 - **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
   lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
-  vertical-roll animations (TIME digits + page changes). *Verify:* overnight soak —
-  no reboots, clock correct, heap stable (via /api/status).
+  vertical-roll animation (TIME digits — done, v0.10.0; a page-change roll was
+  tried and removed after hardware testing, replaced by a dimming crossfade for
+  page transitions — done, v0.11.0; see "Animations"). *Verify:* overnight
+  soak — no reboots, clock correct, heap stable (via /api/status).
 
 ## Open questions / risks
 

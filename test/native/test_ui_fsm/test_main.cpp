@@ -11,7 +11,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // Golden lines for make_snapshot() (24h, SAT 2026-07-05, bright 128 = 8).
-// \x05 is the CGRAM arrow cursor, \x7F the CGROM solid block (full bar cell),
+// \x05 is the CGRAM arrow cursor, \x06 the CGRAM solid block (full bar cell),
 // \x01..\x04 the partial bar cells (code == lit columns). Hex escapes are
 // greedy — a glyph code followed by a hex-digit-ish char needs adjacent-
 // literal concatenation ("\x05" "BRIGHT", not "\x05BRIGHT" == "\x5BRIGHT").
@@ -54,38 +54,40 @@ static void test_boot_renders_first_page(void) {
 
 // make_snapshot() leaves msg empty, so this also pins skip-empty-CUSTOM
 // (OUTDOOR steps straight to PRESSURE in both directions).
+// step() settles the page-change crossfade so the destination page is what's
+// asserted (the transition frames are pinned in test_ui_fade).
 static void test_step_cycles_pages_and_wraps(void) {
     FsmDriver d;
-    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
-    assert_line(d.feed(UiInput::StepCW), INDOOR_LINE);
-    assert_line(d.feed(UiInput::StepCW), OUTDOOR_LINE);
-    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);
-    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // wraps forward
-    assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);  // wraps backward
+    assert_line(d.step(UiInput::StepCW), DATE_LINE);
+    assert_line(d.step(UiInput::StepCW), INDOOR_LINE);
+    assert_line(d.step(UiInput::StepCW), OUTDOOR_LINE);
+    assert_line(d.step(UiInput::StepCW), PRESSURE_LINE);
+    assert_line(d.step(UiInput::StepCW), TIME_LINE);  // wraps forward
+    assert_line(d.step(UiInput::StepCCW), PRESSURE_LINE);  // wraps backward
 }
 
 // Empty msg here too: CUSTOM and PRESSURE are skipped back to back.
 static void test_step_skips_pressure_without_bmp280(void) {
     FsmDriver d;
     d.snap.has_pressure = false;
-    d.feed(UiInput::StepCW);  // DATE
-    d.feed(UiInput::StepCW);  // INDOOR
-    d.feed(UiInput::StepCW);  // OUTDOOR
-    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // skips PRESSURE
-    assert_line(d.feed(UiInput::StepCCW), OUTDOOR_LINE);  // skips backward too
+    d.step(UiInput::StepCW);  // DATE
+    d.step(UiInput::StepCW);  // INDOOR
+    d.step(UiInput::StepCW);  // OUTDOOR
+    assert_line(d.step(UiInput::StepCW), TIME_LINE);  // skips PRESSURE
+    assert_line(d.step(UiInput::StepCCW), OUTDOOR_LINE);  // skips backward too
 }
 
 static void test_step_cycles_six_pages_with_message(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
-    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
-    assert_line(d.feed(UiInput::StepCW), INDOOR_LINE);
-    assert_line(d.feed(UiInput::StepCW), OUTDOOR_LINE);
-    assert_line(d.feed(UiInput::StepCW), CUSTOM_LINE);  // #5, after OUTDOOR
-    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);
-    assert_line(d.feed(UiInput::StepCW), TIME_LINE);  // wraps forward
-    assert_line(d.feed(UiInput::StepCCW), PRESSURE_LINE);
-    assert_line(d.feed(UiInput::StepCCW), CUSTOM_LINE);  // backward too
+    assert_line(d.step(UiInput::StepCW), DATE_LINE);
+    assert_line(d.step(UiInput::StepCW), INDOOR_LINE);
+    assert_line(d.step(UiInput::StepCW), OUTDOOR_LINE);
+    assert_line(d.step(UiInput::StepCW), CUSTOM_LINE);  // #5, after OUTDOOR
+    assert_line(d.step(UiInput::StepCW), PRESSURE_LINE);
+    assert_line(d.step(UiInput::StepCW), TIME_LINE);  // wraps forward
+    assert_line(d.step(UiInput::StepCCW), PRESSURE_LINE);
+    assert_line(d.step(UiInput::StepCCW), CUSTOM_LINE);  // backward too
 }
 
 // A page can lose availability while it is on screen (CUSTOM cleared via
@@ -95,19 +97,24 @@ static void test_custom_cleared_mid_display_auto_advances(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);  // land on CUSTOM
+    d.settle();
     assert_line(d.out, CUSTOM_LINE);
     d.snap.msg[0] = '\0';  // cleared via the API mid-display
-    assert_line(d.idle(), PRESSURE_LINE);
-    assert_no_effects(d.out);
+    d.idle();              // advance off CUSTOM (crossfades to PRESSURE)
+    d.settle();
+    assert_line(d.out, PRESSURE_LINE);
 }
 
 static void test_auto_advance_skips_consecutive_unavailable(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     for (int i = 0; i < 4; i++) d.feed(UiInput::StepCW);  // land on CUSTOM
+    d.settle();
     d.snap.msg[0] = '\0';
     d.snap.has_pressure = false;  // PRESSURE gone too
-    assert_line(d.idle(), TIME_LINE);
+    d.idle();
+    d.settle();
+    assert_line(d.out, TIME_LINE);
 }
 
 // A new POST bumps msg_seq; the display jumps to CUSTOM so the pushed
@@ -117,16 +124,18 @@ static void test_new_message_jumps_to_custom(void) {
     assert_line(d.idle(), TIME_LINE);
     strcpy(d.snap.msg, "HI");
     d.snap.msg_seq++;  // POST arrived
-    assert_line(d.idle(), CUSTOM_LINE);
-    assert_no_effects(d.out);
+    d.idle();          // jump to CUSTOM (crossfades)
+    d.settle();
+    assert_line(d.out, CUSTOM_LINE);
 }
 
 static void test_same_seq_does_not_rejump(void) {
     FsmDriver d;
     strcpy(d.snap.msg, "HI");
     d.snap.msg_seq++;
-    d.idle();  // jumped to CUSTOM
-    assert_line(d.feed(UiInput::StepCW), PRESSURE_LINE);  // rotate away
+    d.idle();
+    d.settle();  // jumped to CUSTOM
+    assert_line(d.step(UiInput::StepCW), PRESSURE_LINE);  // rotate away
     assert_line(d.idle(), PRESSURE_LINE);  // stays put: no new POST
 }
 
@@ -161,13 +170,13 @@ static void test_hold_bar_timeline_and_menu_entry(void) {
     d.feed(UiInput::BtnDown);
     // Clicks stay visually clean: no bar below 500 ms.
     assert_line(d.idle(4), TIME_LINE);  // held 400 ms
-    assert_line(d.idle(1), "MENU     [     ]");  // held 500 ms, bar appears empty
-    assert_line(d.idle(2), "MENU     [\x7F\x7F   ]");  // held 700 ms = 10 columns
-    assert_line(d.idle(2), "MENU     [\x7F\x7F\x7F\x7F ]");  // held 900 ms
+    assert_line(d.idle(1), "MENU            ");  // held 500 ms, bar appears empty
+    assert_line(d.idle(2), "MENU       \x06\x06   ");  // held 700 ms = 10 columns
+    assert_line(d.idle(2), "MENU       \x06\x06\x06\x06 ");  // held 900 ms
     // Threshold tick: completed bar is drawn, the fire is signalled for the
     // shell's 200 ms pause, and the menu is entered at item 0.
     d.idle(1);  // held 1.0 s
-    assert_line(d.out, "MENU     [\x7F\x7F\x7F\x7F\x7F]");
+    assert_line(d.out, "MENU       \x06\x06\x06\x06\x06");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);
     assert_line(d.idle(), MENU_BRIGHT);
@@ -197,11 +206,16 @@ static void test_release_exactly_at_threshold_is_lost(void) {
 
 static void test_rotation_while_held_still_steps(void) {
     FsmDriver d;
+    d.idle();   // valid pages frame so the step below crossfades
     d.feed(UiInput::BtnDown);
     d.idle(3);  // held 300 ms, no bar yet
-    assert_line(d.feed(UiInput::StepCW), DATE_LINE);
-    // The bar keeps filling from the original press.
-    assert_line(d.idle(4), "MENU     [\x7F\x7F   ]");  // held 700 ms
+    // The step registers a page change: it begins a crossfade from the
+    // outgoing page (TIME dims out). Settling here would fire the hold, so the
+    // dim-out frame is what pins that the rotation was processed.
+    assert_line(d.feed(UiInput::StepCW), TIME_LINE);
+    TEST_ASSERT_TRUE(d.out.animating);
+    // The bar keeps filling from the original press (overriding the fade).
+    assert_line(d.idle(4), "MENU       \x06\x06   ");  // held 700 ms
 }
 
 // The fill is column-granular: between the 100 ms tick boundaries the leading
@@ -212,9 +226,9 @@ static void test_hold_bar_column_granular(void) {
     FsmDriver d;
     d.feed(UiInput::BtnDown);
     d.now_us += 540000;  // held 540 ms = 2 columns
-    assert_line(d.feed(UiInput::None), "MENU     [\x02    ]");
+    assert_line(d.feed(UiInput::None), "MENU       \x02    ");
     d.now_us += 220000;  // held 760 ms = 13 columns: 2 full cells + 3 columns
-    assert_line(d.feed(UiInput::None), "MENU     [\x7F\x7F\x03  ]");
+    assert_line(d.feed(UiInput::None), "MENU       \x06\x06\x03  ");
 }
 
 static void test_menu_step_wraps(void) {
@@ -256,7 +270,7 @@ static void test_long_press_from_menu_exits_without_effects(void) {
     FsmDriver d;
     enter_menu(d);
     d.long_press();
-    assert_line(d.out, "EXIT     [\x7F\x7F\x7F\x7F\x7F]");
+    assert_line(d.out, "EXIT       \x06\x06\x06\x06\x06");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);  // nothing to undo from Menu mode
     assert_line(d.idle(), TIME_LINE);
@@ -321,7 +335,7 @@ static void test_portal_banner_only_on_pages_and_below_hold_bar(void) {
     d.snap.net = UiNetState::Portal;
     // The hold bar overrides the banner...
     d.feed(UiInput::BtnDown);
-    assert_line(d.idle(5), "MENU     [     ]");
+    assert_line(d.idle(5), "MENU            ");
     d.idle(5);  // fire into the menu
     // ...and the menu renders normally with the portal active.
     assert_line(d.idle(), MENU_BRIGHT);

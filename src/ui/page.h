@@ -20,6 +20,11 @@ class UiPage {
     // when a BMP280 was probed; CUSTOM only when a message is set).
     virtual bool available(const UiSnapshot&) const { return true; }
 
+    // Opt-in to the vertical roll when this page's content changes while it
+    // is displayed (TIME: digits roll every second). Off by default so value
+    // jitter (sensors) and the CUSTOM marquee don't animate.
+    virtual bool rolls_on_change() const { return false; }
+
   protected:
     ~UiPage() = default;  // never deleted via base pointer
 };
