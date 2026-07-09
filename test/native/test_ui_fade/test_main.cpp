@@ -4,7 +4,8 @@
 // brightness. Out always completes; a page change mid-Out only retargets, while
 // one mid-In restarts In from black for the new page. Driven by SetBrightness
 // effects; yields to overlays (hold bar / portal / menu). The time-based fade
-// envelope is sampled here in 40 ms steps via FsmDriver::idle_us/settle.
+// envelope is sampled here in 20 ms steps (dividing the 100 ms half evenly, so
+// a frame lands exactly on the dark midpoint) via FsmDriver::idle_us/settle.
 #include <string.h>
 #include <unity.h>
 
@@ -33,9 +34,10 @@ static int brightness(const UiOutput& out) {
 }
 
 // A step from TIME->DATE plays the full envelope: the outgoing page is held
-// through the dim-out half (7 frames strictly under 300 ms at 40 ms each), the
-// incoming page appears for the dim-in half, and the saved brightness (128) is
-// restored on the settle frame that also clears `animating`.
+// through the dim-out half (4 frames strictly under 100 ms at 20 ms each), the
+// incoming page appears at the dark midpoint and brightens through the dim-in
+// half, and the saved brightness (128) is restored on the settle frame that
+// also clears `animating`.
 static void test_page_change_crossfade_timeline(void) {
     FsmDriver d;
     d.idle();  // settle on TIME so prev_page_ is valid
@@ -45,18 +47,22 @@ static void test_page_change_crossfade_timeline(void) {
     TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
     // Dim-out half: outgoing page held, brightness strictly falls.
     int prev = 128;
-    for (int i = 0; i < 7; i++) {
-        d.idle_us(40000);
+    for (int i = 0; i < 4; i++) {  // 20, 40, 60, 80 ms
+        d.idle_us(20000);
         assert_line(d.out, TIME_LINE);
         TEST_ASSERT_TRUE(d.out.animating);
         int b = brightness(d.out);
         TEST_ASSERT_TRUE(b < prev);
         prev = b;
     }
+    // Dark midpoint: the incoming page appears at brightness 0.
+    d.idle_us(20000);  // 100 ms
+    assert_line(d.out, DATE_LINE);
+    TEST_ASSERT_EQUAL_INT(0, brightness(d.out));
     // Dim-in half: incoming page shown, brightness strictly climbs.
-    prev = -1;
-    for (int i = 0; i < 7; i++) {
-        d.idle_us(40000);
+    prev = 0;
+    for (int i = 0; i < 4; i++) {  // 120, 140, 160, 180 ms
+        d.idle_us(20000);
         assert_line(d.out, DATE_LINE);
         TEST_ASSERT_TRUE(d.out.animating);
         int b = brightness(d.out);
@@ -64,7 +70,7 @@ static void test_page_change_crossfade_timeline(void) {
         prev = b;
     }
     // Settle frame: brightness restored to the saved level, animation over.
-    d.idle_us(40000);
+    d.idle_us(20000);  // 200 ms
     assert_line(d.out, DATE_LINE);
     TEST_ASSERT_FALSE(d.out.animating);
     TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
@@ -77,14 +83,14 @@ static void test_content_swaps_at_dark_midpoint(void) {
     FsmDriver d;
     d.idle();
     d.feed(UiInput::StepCW);  // TIME -> DATE
-    // The swap straddles the dark midpoint: the last outgoing frame and the
-    // first incoming frame are both near black.
-    d.idle_us(40000, 7);      // elapsed 280 ms: last dim-out frame
+    // The last outgoing frame is dim; the swap to the incoming page lands at
+    // the dark midpoint (brightness 0).
+    d.idle_us(20000, 4);      // 80 ms: last dim-out frame
     assert_line(d.out, TIME_LINE);
-    TEST_ASSERT_TRUE(brightness(d.out) < 20);
-    d.idle_us(40000, 1);      // elapsed 320 ms: first dim-in frame
+    TEST_ASSERT_TRUE(brightness(d.out) > 0 && brightness(d.out) < 128);
+    d.idle_us(20000, 1);      // 100 ms: swap frame, incoming at black
     assert_line(d.out, DATE_LINE);
-    TEST_ASSERT_TRUE(brightness(d.out) < 20);
+    TEST_ASSERT_EQUAL_INT(0, brightness(d.out));
 }
 
 // A page change during dim-out only retargets: the outgoing page keeps dimming
@@ -94,7 +100,7 @@ static void test_step_during_dim_out_retargets_not_restarts(void) {
     FsmDriver d;
     d.idle();                 // settled on TIME
     d.feed(UiInput::StepCW);  // TIME -> DATE: dim-out of TIME begins
-    d.idle_us(40000, 4);      // 160 ms into the dim-out
+    d.idle_us(20000, 2);      // 40 ms into the dim-out
     assert_line(d.out, TIME_LINE);
     int mid = brightness(d.out);
     TEST_ASSERT_TRUE(mid < 128 && mid > 0);
@@ -114,7 +120,7 @@ static void test_step_during_dim_in_restarts_from_black(void) {
     FsmDriver d;
     d.idle();
     d.feed(UiInput::StepCW);  // TIME -> DATE
-    d.idle_us(40000, 10);     // ~400 ms: past dim-out, into DATE's dim-in
+    d.idle_us(20000, 7);      // 140 ms: past dim-out, into DATE's dim-in
     assert_line(d.out, DATE_LINE);
     TEST_ASSERT_TRUE(brightness(d.out) > 0);
     // Step during dim-in: INDOOR takes over from black.
@@ -170,28 +176,29 @@ static void test_auto_advance_crossfades(void) {
     assert_line(d.out, PRESSURE_LINE);
 }
 
-// An overlay taking over mid-fade (here the hold bar at 500 ms) ends the fade
-// and restores brightness so the overlay never renders dim.
-static void test_overlay_ends_fade_and_restores_brightness(void) {
+// Entering the menu crossfades like a page change: the hold bar fires into the
+// menu, which dims in, settling on >BRIGHT at the saved brightness.
+static void test_menu_entry_crossfades(void) {
     FsmDriver d;
-    d.idle();
-    d.feed(UiInput::StepCW);  // start fade TIME -> DATE
-    d.idle_us(40000, 3);      // dim-out in progress
-    TEST_ASSERT_TRUE(brightness(d.out) < 128);
-    d.feed(UiInput::BtnDown);
-    d.idle(5);  // held 500 ms: the hold bar overlays the fade
-    assert_line(d.out, "MENU            ");
+    d.long_press();  // hold bar fires into the menu
+    TEST_ASSERT_TRUE(d.out.animating);
+    assert_line(d.settle(), "\x05" "BRIGHT        8");
     TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
 }
 
-// Returning to the pages from the menu snaps (prev_page_ was invalidated while
-// overlaid) — no fade from stale content.
-static void test_menu_exit_snaps_no_fade(void) {
+// Menu item navigation and exit crossfade too — the transition begins animating
+// and settles on the destination.
+static void test_menu_nav_and_exit_crossfade(void) {
     FsmDriver d;
-    d.long_press();            // into the menu
-    d.feed(UiInput::StepCCW);  // EXIT
-    assert_line(d.click(), TIME_LINE);
-    TEST_ASSERT_FALSE(d.out.animating);
+    d.long_press();
+    d.settle();  // in the menu on >BRIGHT
+    d.feed(UiInput::StepCCW);  // rotate to >EXIT
+    TEST_ASSERT_TRUE(d.out.animating);
+    assert_line(d.settle(), "\x05" "EXIT           ");
+    d.click();  // exit to the pages
+    TEST_ASSERT_TRUE(d.out.animating);
+    assert_line(d.settle(), TIME_LINE);
+    TEST_ASSERT_EQUAL_INT(128, brightness(d.out));
 }
 
 int main(int, char**) {
@@ -203,7 +210,7 @@ int main(int, char**) {
     RUN_TEST(test_fade_scales_to_saved_brightness);
     RUN_TEST(test_msg_jump_crossfades);
     RUN_TEST(test_auto_advance_crossfades);
-    RUN_TEST(test_overlay_ends_fade_and_restores_brightness);
-    RUN_TEST(test_menu_exit_snaps_no_fade);
+    RUN_TEST(test_menu_entry_crossfades);
+    RUN_TEST(test_menu_nav_and_exit_crossfade);
     return UNITY_END();
 }

@@ -188,30 +188,32 @@ static void test_btndown_mid_roll_cancels_before_hold_bar(void) {
     d.idle_us(30000, 3);  // TIME roll mid-flight
     assert_line(d.feed(UiInput::BtnDown), "    14:25:37    ");  // snapped
     TEST_ASSERT_FALSE(d.out.animating);
-    assert_line(d.idle(5), "MENU            ");  // bar at 500 ms
-    TEST_ASSERT_TRUE(d.out.animating);           // hold bar animates the fill
+    d.idle(5);  // held 500 ms: the hold bar begins crossfading in
+    TEST_ASSERT_TRUE(d.out.animating);
 }
 
 static void test_portal_banner_suppresses_roll(void) {
     FsmDriver d;
     d.snap.net = UiNetState::Portal;
     d.idle();
-    d.feed(UiInput::StepCW);  // page steps underneath the banner
+    d.feed(UiInput::StepCW);  // page steps underneath the banner (no roll)
     TEST_ASSERT_FALSE(d.out.animating);
     d.snap.net = UiNetState::Connected;
-    // First un-overlaid frame snaps to the stepped-to page — no stale roll.
-    assert_line(d.idle(), DATE_LINE);
+    // Leaving the portal crossfades to the stepped-to page (not a roll).
+    d.idle();
+    assert_line(d.settle(), DATE_LINE);
     TEST_ASSERT_FALSE(d.out.animating);
 }
 
-static void test_menu_exit_snaps_to_pages(void) {
+static void test_menu_carries_arrow_glyph(void) {
     FsmDriver d;
     d.long_press();
-    d.idle();  // menu (arrow glyph rides the default channel)
+    d.settle();  // crossfade into the menu (arrow glyph rides the default channel)
     TEST_ASSERT_EQUAL_UINT8_ARRAY(UI_GLYPHS[UI_GLYPH_ARROW - 1].cols,
                                   d.out.glyphs[UI_GLYPH_ARROW], 5);
-    d.feed(UiInput::StepCCW);  // EXIT
-    assert_line(d.click(), TIME_LINE);  // immediate, no roll out of the menu
+    d.step(UiInput::StepCCW);  // EXIT
+    d.click();                 // exit crossfades out of the menu (no roll)
+    assert_line(d.settle(), TIME_LINE);
     TEST_ASSERT_FALSE(d.out.animating);
 }
 
@@ -230,6 +232,6 @@ int main(int, char**) {
     RUN_TEST(test_input_mid_roll_snaps_then_processes);
     RUN_TEST(test_btndown_mid_roll_cancels_before_hold_bar);
     RUN_TEST(test_portal_banner_suppresses_roll);
-    RUN_TEST(test_menu_exit_snaps_to_pages);
+    RUN_TEST(test_menu_carries_arrow_glyph);
     return UNITY_END();
 }

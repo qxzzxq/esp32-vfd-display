@@ -40,9 +40,11 @@ static void assert_single_effect(const UiOutput& out, UiEffect::Type t, uint8_t 
     TEST_ASSERT_EQUAL_INT((int)arg, (int)out.effects[0].arg);
 }
 
-// Enter the menu from pages via long-press; leaves the FSM on ">BRIGHT".
+// Enter the menu from pages via long-press; leaves the FSM settled on ">BRIGHT"
+// (the hold bar crossfades into the menu, so settle before asserting).
 static void enter_menu(FsmDriver& d) {
     d.long_press();
+    d.settle();
     assert_line(d.idle(), MENU_BRIGHT);
 }
 
@@ -170,21 +172,24 @@ static void test_hold_bar_timeline_and_menu_entry(void) {
     d.feed(UiInput::BtnDown);
     // Clicks stay visually clean: no bar below 500 ms.
     assert_line(d.idle(4), TIME_LINE);  // held 400 ms
-    assert_line(d.idle(1), "MENU            ");  // held 500 ms, bar appears empty
-    assert_line(d.idle(2), "MENU       \x06\x06   ");  // held 700 ms = 10 columns
-    assert_line(d.idle(2), "MENU       \x06\x06\x06\x06 ");  // held 900 ms
+    // At 500 ms the bar crossfades in — the clock dims out first, so the fill
+    // only shows at full brightness once the ~200 ms entry fade completes.
+    assert_line(d.idle(1), TIME_LINE);  // held 500 ms: fade dims the clock out
+    assert_line(d.idle(2), "MENU       \x06\x06   ");  // 700 ms: fade done, 2 cells
+    assert_line(d.idle(2), "MENU       \x06\x06\x06\x06 ");  // 900 ms
     // Threshold tick: completed bar is drawn, the fire is signalled for the
     // shell's 200 ms pause, and the menu is entered at item 0.
     d.idle(1);  // held 1.0 s
     assert_line(d.out, "MENU       \x06\x06\x06\x06\x06");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);
-    assert_line(d.idle(), MENU_BRIGHT);
+    assert_line(d.settle(), MENU_BRIGHT);  // crossfades into the menu
 }
 
 static void test_release_after_fire_is_swallowed(void) {
     FsmDriver d;
     d.long_press();  // fires, still held
+    d.settle();      // crossfade into the menu
     d.now_us += 300000;
     // The eventual release must NOT click (a click would enter BRIGHT edit).
     assert_line(d.feed(UiInput::BtnUp), MENU_BRIGHT);
@@ -199,9 +204,9 @@ static void test_release_exactly_at_threshold_is_lost(void) {
     d.feed(UiInput::BtnDown);
     d.idle(9);  // held 0.9 s, not fired yet
     d.now_us += 100000;  // held exactly 1.0 s
-    assert_line(d.feed(UiInput::BtnUp), TIME_LINE);  // still on pages
-    TEST_ASSERT_FALSE(d.out.hold_fired);
-    assert_no_effects(d.out);
+    d.feed(UiInput::BtnUp);
+    TEST_ASSERT_FALSE(d.out.hold_fired);  // no fire
+    assert_line(d.settle(), TIME_LINE);   // crossfades back to the pages
 }
 
 static void test_rotation_while_held_still_steps(void) {
@@ -218,34 +223,35 @@ static void test_rotation_while_held_still_steps(void) {
     assert_line(d.idle(4), "MENU       \x06\x06   ");  // held 700 ms
 }
 
-// The fill is column-granular: between the 100 ms tick boundaries the leading
-// cell renders as a partial CGRAM bar glyph (code == lit columns). Only
-// reachable with off-tick timing here; on-target it shows once the tick rate
-// rises while animating.
+// The fill is column-granular: a partial cell renders as a partial CGRAM bar
+// glyph (code == lit columns). Sampled after the ~200 ms entry crossfade so the
+// bar shows at full brightness rather than mid-fade.
 static void test_hold_bar_column_granular(void) {
     FsmDriver d;
     d.feed(UiInput::BtnDown);
-    d.now_us += 540000;  // held 540 ms = 2 columns
-    assert_line(d.feed(UiInput::None), "MENU       \x02    ");
-    d.now_us += 220000;  // held 760 ms = 13 columns: 2 full cells + 3 columns
+    d.now_us += 500000;  // 500 ms: bar appears, entry crossfade starts
+    d.feed(UiInput::None);
+    d.now_us += 260000;  // 760 ms: fade done; 13 columns = 2 full + a 3-col partial
     assert_line(d.feed(UiInput::None), "MENU       \x06\x06\x03  ");
 }
 
+// step() settles the item-to-item crossfade so the destination item is asserted.
 static void test_menu_step_wraps(void) {
     FsmDriver d;
     enter_menu(d);
-    assert_line(d.feed(UiInput::StepCW), MENU_WIFI);
-    assert_line(d.feed(UiInput::StepCW), MENU_EXIT);
-    assert_line(d.feed(UiInput::StepCW), MENU_BRIGHT);  // wraps forward
-    assert_line(d.feed(UiInput::StepCCW), MENU_EXIT);   // wraps backward
+    assert_line(d.step(UiInput::StepCW), MENU_WIFI);
+    assert_line(d.step(UiInput::StepCW), MENU_EXIT);
+    assert_line(d.step(UiInput::StepCW), MENU_BRIGHT);  // wraps forward
+    assert_line(d.step(UiInput::StepCCW), MENU_EXIT);   // wraps backward
 }
 
 static void test_exit_item_returns_to_pages(void) {
     FsmDriver d;
     enter_menu(d);
-    d.feed(UiInput::StepCCW);  // EXIT
-    assert_line(d.click(), TIME_LINE);
-    assert_no_effects(d.out);
+    d.step(UiInput::StepCCW);  // EXIT
+    d.click();                 // exit crossfades back to the pages
+    assert_line(d.settle(), TIME_LINE);
+    TEST_ASSERT_FALSE(d.out.animating);
 }
 
 static void test_bright_edit_commit_flow(void) {
@@ -273,7 +279,7 @@ static void test_long_press_from_menu_exits_without_effects(void) {
     assert_line(d.out, "EXIT       \x06\x06\x06\x06\x06");
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_no_effects(d.out);  // nothing to undo from Menu mode
-    assert_line(d.idle(), TIME_LINE);
+    assert_line(d.settle(), TIME_LINE);  // crossfades back to the pages
 }
 
 static void test_long_press_from_edit_restores_brightness(void) {
@@ -284,7 +290,7 @@ static void test_long_press_from_edit_restores_brightness(void) {
     d.long_press();
     TEST_ASSERT_TRUE(d.out.hold_fired);
     assert_single_effect(d.out, UiEffect::Type::SetBrightness, 128);  // saved value
-    assert_line(d.idle(), TIME_LINE);
+    assert_line(d.settle(), TIME_LINE);  // crossfades back to the pages
 }
 
 static void test_menu_timeout_anchored_at_button_down(void) {
@@ -293,8 +299,8 @@ static void test_menu_timeout_anchored_at_button_down(void) {
     FsmDriver d;
     d.long_press();  // BtnDown at T, menu at T+1.0 s
     assert_line(d.idle(190), MENU_BRIGHT);  // T+20.0 s: '>' comparison, still menu
-    assert_line(d.idle(1), TIME_LINE);      // T+20.1 s: timed out
-    assert_no_effects(d.out);
+    d.idle(1);  // T+20.1 s: timed out, crossfades to the pages
+    assert_line(d.settle(), TIME_LINE);
 }
 
 static void test_menu_timeout_during_edit_aborts(void) {
@@ -304,17 +310,16 @@ static void test_menu_timeout_during_edit_aborts(void) {
     d.feed(UiInput::StepCCW);  // dim to 7 — last input
     d.idle(200);               // 20.0 s later: still editing
     assert_line(d.out, " BRIGHT       \x05" "7");
-    d.idle(1);                 // 20.1 s: abandon the edit
-    assert_line(d.out, TIME_LINE);
-    assert_single_effect(d.out, UiEffect::Type::SetBrightness, 128);
+    d.idle(1);                 // 20.1 s: abandon the edit, crossfade to the pages
+    assert_line(d.settle(), TIME_LINE);
 }
 
 static void test_wifi_reset_two_step_confirm(void) {
     FsmDriver d;
     enter_menu(d);
-    assert_line(d.feed(UiInput::StepCW), MENU_WIFI);
-    assert_line(d.click(), "CLICK = CONFIRM ");  // armed
-    assert_line(d.feed(UiInput::StepCW), MENU_WIFI);  // rotate cancels
+    assert_line(d.step(UiInput::StepCW), MENU_WIFI);  // item change crossfades
+    assert_line(d.click(), "CLICK = CONFIRM ");  // armed (Menu->Edit, same screen)
+    assert_line(d.feed(UiInput::StepCW), MENU_WIFI);  // rotate cancels (same screen)
     assert_no_effects(d.out);
     d.click();  // arm again
     d.click();  // confirm
@@ -333,12 +338,17 @@ static void test_portal_banner_alternates_every_3s(void) {
 static void test_portal_banner_only_on_pages_and_below_hold_bar(void) {
     FsmDriver d;
     d.snap.net = UiNetState::Portal;
-    // The hold bar overrides the banner...
+    // The hold bar overrides the banner: holding crossfades it in over the
+    // banner (sampled at 700 ms, past the entry fade).
     d.feed(UiInput::BtnDown);
-    assert_line(d.idle(5), "MENU            ");
-    d.idle(5);  // fire into the menu
-    // ...and the menu renders normally with the portal active.
-    assert_line(d.idle(), MENU_BRIGHT);
+    d.now_us += 500000;
+    d.feed(UiInput::None);  // 500 ms: bar begins crossfading in over the banner
+    d.now_us += 200000;
+    assert_line(d.feed(UiInput::None), "MENU       \x06\x06   ");  // 700 ms: the bar, not "SETUP"
+    d.now_us += 300000;
+    d.feed(UiInput::None);  // 1.0 s: fires into the menu
+    // ...and the menu renders normally with the portal still active.
+    assert_line(d.settle(), MENU_BRIGHT);
 }
 
 int main(int, char**) {
