@@ -39,6 +39,7 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
             out->emit(UiEffect::Type::SetBrightness, view.bright);
         }
         last_input_us_ = now_us;
+        last_cycle_us_ = now_us;  // input restarts the auto-cycle interval
         switch (in) {
             case UiInput::StepCW: handle_step(1, view, *out); break;
             case UiInput::StepCCW: handle_step(-1, view, *out); break;
@@ -54,9 +55,27 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
             default:
                 break;
         }
-    } else if (mode_ != Mode::Pages && now_us - last_input_us_ > UI_MENU_TIMEOUT_US) {
+    } else if (mode_ == Mode::Edit && items_[item_]->edit_timeout_us() > 0) {
+        // A self-dismissing edit overlay (STATUS): auto-return to its menu item
+        // after the item's own timeout, undoing any transient side effects.
+        if (now_us - last_input_us_ > items_[item_]->edit_timeout_us()) {
+            items_[item_]->edit_abort(view, *out);
+            mode_ = Mode::Menu;
+        }
+    } else if (mode_ != Mode::Pages) {
         // Inactivity: abandon the menu (and any uncommitted edit)
-        abort_to_pages(view, *out);
+        if (now_us - last_input_us_ > UI_MENU_TIMEOUT_US) abort_to_pages(view, *out);
+    } else if (view.cycle_s > 0 &&
+               now_us - last_input_us_ >= UI_AUTO_CYCLE_PAUSE_US &&
+               now_us - last_cycle_us_ >= (int64_t)view.cycle_s * 1000000LL) {
+        // Auto-cycle: past the post-input pause, advance to the next available
+        // page every cycle_s (empty CUSTOM / absent PRESSURE are skipped; TIME
+        // is always available so the loop terminates). The page change is a
+        // screen change, so apply_transition crossfades it like a manual step.
+        last_cycle_us_ = now_us;
+        do {
+            page_ = (uint8_t)((page_ + 1) % page_count_);
+        } while (!pages_[page_]->available(view));
     }
 
     // A new POST jumps the display to CUSTOM so the pushed message shows

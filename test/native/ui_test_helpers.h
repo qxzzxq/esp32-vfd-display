@@ -41,6 +41,11 @@ inline UiSnapshot make_snapshot() {
     strcpy(s.ap_ssid, "VFD-ABCD");
     s.bright = 128;
     s.use24h = true;
+    static const char* const TZ_NAMES[] = {"UTC", "PARIS", "TOKYO"};
+    s.tz_idx = 0;  // UTC
+    s.tz_count = 3;
+    s.tz_names = TZ_NAMES;
+    s.cycle_s = 0;  // auto-cycle off
     return s;
 }
 

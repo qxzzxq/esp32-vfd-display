@@ -169,8 +169,8 @@ pauses auto-cycle for 30 s):
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
 while held; `MENU       ==   ` progress bar appears after 0.5 s) = enter menu. Click on
-the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
-`WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
+the pages is unassigned. Device status (the STA IP / `AP 192.168.4.1` in portal
+mode / `WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
 
 **Menu**: rotate = move between items; click = enter edit (the cursor moves to the
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
@@ -318,12 +318,17 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   RAM-only by design (cleared on reboot — no NVS wear). Not yet exercised by eye:
   marquee cadence/wrap gap on the VFD, auto-advance when the shown message is
   cleared.
-- **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
-  lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
-  vertical-roll animation (TIME digits — done, v0.10.0; a page-change roll was
-  tried and removed after hardware testing, replaced by a dimming crossfade for
-  page transitions — done, v0.11.0; see "Animations"). *Verify:* overnight
-  soak — no reboots, clock correct, heap stable (via /api/status).
+- **M7 — Polish**: portal lat/lon/TZ fields (done, M4 portal), CGRAM glyphs
+  (bar cells + arrow cursor — done, v0.9.0), vertical-roll animation (TIME
+  digits — done, v0.10.0; a page-change roll was tried and removed after
+  hardware testing, replaced by a dimming crossfade for page transitions —
+  done, v0.11.0; see "Animations"), full menu (24H, TZ, CYCLE, STATUS) +
+  page auto-cycle (done, v0.13.0). The STATUS item borrows the edit sub-mode as
+  a self-dismissing overlay via `MenuItem::edit_timeout_us`; auto-cycle lives in
+  `UiFsm` (advance every `cycle_s` once past a 30 s post-input pause, skipping
+  unavailable pages) — both covered by the `test_ui_menu`/`test_ui_fsm` suites.
+  *Remaining hardware verify:* overnight soak — no reboots, clock correct, heap
+  stable (via /api/status); then bump to v1.0.0.
 
 ## Open questions / risks
 

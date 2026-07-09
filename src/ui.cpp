@@ -71,6 +71,8 @@ static UiSnapshot build_snapshot() {
     s.bright = st.bright;
     s.use24h = st.use24h != 0;
     s.tz_idx = st.tz_idx;
+    s.tz_count = (uint8_t)tz_count();
+    s.tz_names = tz_names();
     s.cycle_s = st.cycle_s;
     s.msg_seq = web_get_message(s.msg);
     return s;
@@ -84,6 +86,24 @@ static void execute_effect(const UiEffect& e) {
         case UiEffect::Type::CommitBrightness: {
             Settings st = settings_get();
             st.bright = e.arg;
+            settings_save(st);
+            break;
+        }
+        case UiEffect::Type::CommitUse24h: {
+            Settings st = settings_get();
+            st.use24h = e.arg;
+            settings_save(st);
+            break;
+        }
+        case UiEffect::Type::CommitTz: {
+            Settings st = settings_get();
+            st.tz_idx = e.arg;
+            settings_save(st);  // settings_save re-applies the timezone
+            break;
+        }
+        case UiEffect::Type::CommitCycle: {
+            Settings st = settings_get();
+            st.cycle_s = e.arg;
             settings_save(st);
             break;
         }

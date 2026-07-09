@@ -23,7 +23,11 @@ static const char* PRESSURE_LINE = "PRES 1013.2 hPa ";
 static const char* CUSTOM_LINE = "       HI       ";  // msg "HI", centered
 static const char* MENU_BRIGHT = "\x05" "BRIGHT        8";
 static const char* EDIT_BRIGHT_8 = " BRIGHT       \x05" "8";
+static const char* MENU_24H = "\x05" "24H          ON";  // make_snapshot: 24h on
+static const char* MENU_TZ = "\x05" "TZ          UTC";   // tz_idx 0 = UTC (helper)
+static const char* MENU_CYCLE = "\x05" "CYCLE       OFF"; // cycle_s 0 = OFF
 static const char* MENU_WIFI = "\x05" "WIFI RESET     ";
+static const char* MENU_STATUS = "\x05" "STATUS         ";
 static const char* MENU_EXIT = "\x05" "EXIT           ";
 
 static void assert_line(const UiOutput& out, const char* expect) {
@@ -236,10 +240,15 @@ static void test_hold_bar_column_granular(void) {
 }
 
 // step() settles the item-to-item crossfade so the destination item is asserted.
+// Walks the full M7 registry order: BRIGHT,24H,TZ,CYCLE,WIFI,STATUS,EXIT.
 static void test_menu_step_wraps(void) {
     FsmDriver d;
     enter_menu(d);
+    assert_line(d.step(UiInput::StepCW), MENU_24H);
+    assert_line(d.step(UiInput::StepCW), MENU_TZ);
+    assert_line(d.step(UiInput::StepCW), MENU_CYCLE);
     assert_line(d.step(UiInput::StepCW), MENU_WIFI);
+    assert_line(d.step(UiInput::StepCW), MENU_STATUS);
     assert_line(d.step(UiInput::StepCW), MENU_EXIT);
     assert_line(d.step(UiInput::StepCW), MENU_BRIGHT);  // wraps forward
     assert_line(d.step(UiInput::StepCCW), MENU_EXIT);   // wraps backward
@@ -263,7 +272,7 @@ static void test_button_snaps_menu_item_fade(void) {
     assert_line(d.feed(UiInput::StepCW), MENU_BRIGHT);  // rotate: fade shows outgoing BRIGHT
     TEST_ASSERT_TRUE(d.out.animating);
     // Button-down snaps to the incoming item at full brightness before any action.
-    assert_line(d.feed(UiInput::BtnDown), MENU_WIFI);
+    assert_line(d.feed(UiInput::BtnDown), MENU_24H);
     TEST_ASSERT_FALSE(d.out.animating);
     assert_single_effect(d.out, UiEffect::Type::SetBrightness, 128);
 }
@@ -331,7 +340,8 @@ static void test_menu_timeout_during_edit_aborts(void) {
 static void test_wifi_reset_two_step_confirm(void) {
     FsmDriver d;
     enter_menu(d);
-    assert_line(d.step(UiInput::StepCW), MENU_WIFI);  // item change crossfades
+    for (int i = 0; i < 4; i++) d.step(UiInput::StepCW);  // BRIGHT -> WIFI (index 4)
+    assert_line(d.out, MENU_WIFI);
     assert_line(d.click(), "CLICK = CONFIRM ");  // armed (Menu->Edit, same screen)
     assert_line(d.feed(UiInput::StepCW), MENU_WIFI);  // rotate cancels (same screen)
     assert_no_effects(d.out);
@@ -365,6 +375,84 @@ static void test_portal_banner_only_on_pages_and_below_hold_bar(void) {
     assert_line(d.settle(), MENU_BRIGHT);
 }
 
+// --- Auto-cycle ---------------------------------------------------------
+
+// With cycle_s set, pages auto-advance once the 30 s post-input pause elapses.
+static void test_auto_cycle_advances_after_pause(void) {
+    FsmDriver d;
+    d.snap.cycle_s = 10;
+    assert_line(d.idle(), TIME_LINE);  // establish TIME as the fade-from screen
+    d.now_us = 31000000;               // 31 s: past the 30 s pause + one interval
+    d.feed(UiInput::None);
+    TEST_ASSERT_TRUE(d.out.animating);           // crossfades like a manual step
+    assert_line(d.settle(), DATE_LINE);
+}
+
+static void test_auto_cycle_off_never_advances(void) {
+    FsmDriver d;
+    d.snap.cycle_s = 0;  // OFF
+    d.idle();
+    d.now_us = 120000000;  // 2 min later
+    assert_line(d.feed(UiInput::None), TIME_LINE);
+    TEST_ASSERT_FALSE(d.out.animating);
+}
+
+// Any input restarts the pause, so a recent manual step suppresses auto-advance
+// for 30 s before cycling resumes.
+static void test_auto_cycle_paused_by_input(void) {
+    FsmDriver d;
+    d.snap.cycle_s = 10;
+    d.idle();
+    d.now_us = 25000000;
+    d.step(UiInput::StepCW);  // manual -> DATE; resets the pause at 25 s
+    d.now_us = 30000000;      // only 5 s since the input: still paused
+    assert_line(d.feed(UiInput::None), DATE_LINE);
+    TEST_ASSERT_FALSE(d.out.animating);
+    d.now_us = 56000000;      // 31 s since the input: resumes, DATE -> INDOOR
+    d.feed(UiInput::None);
+    assert_line(d.settle(), INDOOR_LINE);
+}
+
+// Auto-advance skips unavailable pages just like manual navigation: with no
+// custom message, OUTDOOR cycles straight to PRESSURE.
+static void test_auto_cycle_skips_empty_custom(void) {
+    FsmDriver d;
+    d.snap.cycle_s = 5;  // msg empty by default -> CUSTOM unavailable
+    d.step(UiInput::StepCW);  // DATE
+    d.step(UiInput::StepCW);  // INDOOR
+    d.step(UiInput::StepCW);  // OUTDOOR
+    d.now_us += 40000000;     // past the pause
+    d.feed(UiInput::None);    // OUTDOOR -> (skip CUSTOM) -> PRESSURE
+    assert_line(d.settle(), PRESSURE_LINE);
+}
+
+// --- STATUS overlay -----------------------------------------------------
+
+static void goto_status(FsmDriver& d) {
+    enter_menu(d);  // BRIGHT
+    for (int i = 0; i < 5; i++) d.step(UiInput::StepCW);  // -> STATUS (index 5)
+    assert_line(d.out, MENU_STATUS);
+}
+
+// Click opens the read-only status line; it auto-returns to the menu item after
+// UI_STATUS_SHOW_US with nothing persisted.
+static void test_status_overlay_returns_after_timeout(void) {
+    FsmDriver d;
+    goto_status(d);
+    strcpy(d.snap.ip, "10.0.0.5");  // net Connected by default
+    assert_line(d.click(), "10.0.0.5        ");  // overlay (same screen id: snaps)
+    assert_no_effects(d.out);
+    d.now_us += 3100000;  // past the 3 s auto-return
+    assert_line(d.feed(UiInput::None), MENU_STATUS);
+}
+
+static void test_status_overlay_dismissed_by_rotation(void) {
+    FsmDriver d;
+    goto_status(d);
+    d.click();  // open the overlay
+    assert_line(d.feed(UiInput::StepCW), MENU_STATUS);  // any rotation dismisses it
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_boot_renders_first_page);
@@ -394,5 +482,11 @@ int main(int, char**) {
     RUN_TEST(test_wifi_reset_two_step_confirm);
     RUN_TEST(test_portal_banner_alternates_every_3s);
     RUN_TEST(test_portal_banner_only_on_pages_and_below_hold_bar);
+    RUN_TEST(test_auto_cycle_advances_after_pause);
+    RUN_TEST(test_auto_cycle_off_never_advances);
+    RUN_TEST(test_auto_cycle_paused_by_input);
+    RUN_TEST(test_auto_cycle_skips_empty_custom);
+    RUN_TEST(test_status_overlay_returns_after_timeout);
+    RUN_TEST(test_status_overlay_dismissed_by_rotation);
     return UNITY_END();
 }
