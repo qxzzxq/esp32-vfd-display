@@ -39,6 +39,7 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
             out->emit(UiEffect::Type::SetBrightness, view.bright);
         }
         last_input_us_ = now_us;
+        last_cycle_us_ = now_us;  // input restarts the auto-cycle interval
         switch (in) {
             case UiInput::StepCW: handle_step(1, view, *out); break;
             case UiInput::StepCCW: handle_step(-1, view, *out); break;
@@ -54,9 +55,20 @@ void UiFsm::tick(UiInput in, int64_t now_us, const UiSnapshot& s, UiOutput* out)
             default:
                 break;
         }
-    } else if (mode_ != Mode::Pages && now_us - last_input_us_ > UI_MENU_TIMEOUT_US) {
+    } else if (mode_ != Mode::Pages) {
         // Inactivity: abandon the menu (and any uncommitted edit)
-        abort_to_pages(view, *out);
+        if (now_us - last_input_us_ > UI_MENU_TIMEOUT_US) abort_to_pages(view, *out);
+    } else if (view.cycle_s > 0 &&
+               now_us - last_input_us_ >= UI_AUTO_CYCLE_PAUSE_US &&
+               now_us - last_cycle_us_ >= (int64_t)view.cycle_s * 1000000LL) {
+        // Auto-cycle: past the post-input pause, advance to the next available
+        // page every cycle_s (empty CUSTOM / absent PRESSURE are skipped; TIME
+        // is always available so the loop terminates). The page change is a
+        // screen change, so apply_transition crossfades it like a manual step.
+        last_cycle_us_ = now_us;
+        do {
+            page_ = (uint8_t)((page_ + 1) % page_count_);
+        } while (!pages_[page_]->available(view));
     }
 
     // A new POST jumps the display to CUSTOM so the pushed message shows
@@ -196,10 +208,14 @@ void UiFsm::default_glyphs(UiOutput* out) {
 
 UiFsm::ScreenId UiFsm::screen_id(bool hold_visible, const UiSnapshot& s) const {
     // Must mirror render()'s priority so the id names exactly what is on screen.
-    if (hold_visible) return {Screen::HoldBar, 0};
-    if (mode_ == Mode::Pages && s.net == UiNetState::Portal) return {Screen::Portal, 0};
-    if (mode_ == Mode::Pages) return {Screen::Page, page_};
-    return {Screen::Menu, item_};  // Menu and Edit collapse (Edit must not fade)
+    if (hold_visible) return {Screen::HoldBar, 0, 0};
+    if (mode_ == Mode::Pages && s.net == UiNetState::Portal) return {Screen::Portal, 0, 0};
+    if (mode_ == Mode::Pages) return {Screen::Page, page_, 0};
+    // Menu and Edit share kind+idx (Edit must not fade on entry). An editing
+    // item's sub-screen splits its internal pages so they crossfade (ABOUT: IP
+    // vs version); value edits keep sub 0 and stay unfaded.
+    uint8_t sub = mode_ == Mode::Edit ? items_[item_]->edit_subscreen() : 0;
+    return {Screen::Menu, item_, sub};
 }
 
 void UiFsm::apply_transition(char line[17], int64_t now_us, const UiSnapshot& s,

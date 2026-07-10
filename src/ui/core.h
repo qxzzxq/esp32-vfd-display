@@ -41,11 +41,15 @@ struct UiSnapshot {
     uint32_t weather_age_s; // seconds since the last successful fetch (staleness)
     UiNetState net;
     char ap_ssid[16];   // provisioning AP name (portal banner)
-    char ip[16];        // STA IP; reserved for the M7 STATUS item
+    char ip[16];        // STA IP; shown by the ABOUT item
+    char version[32];   // firmware version (app descriptor); ABOUT item
     uint8_t bright;     // saved brightness, driver units 0..240
     bool use24h;
-    uint8_t tz_idx;     // M7 TZ item
-    uint8_t cycle_s;    // M7 auto-cycle
+    uint8_t tz_idx;     // index into the timezone table (TZ item)
+    uint8_t tz_count;   // table length (TZ edit wraps within it)
+    const char* const* tz_names;  // tz_count display names, owned by settings
+                                  // (the core can't include settings.h)
+    uint8_t cycle_s;    // auto-cycle interval, seconds; 0 = off
     char msg[65];       // CUSTOM page text (POST /api/message)
     uint32_t msg_seq;   // bumps on every accepted POST; a change with a
                         // non-empty msg jumps the display to CUSTOM
@@ -56,6 +60,9 @@ struct UiEffect {
     enum class Type : uint8_t {
         SetBrightness,     // arg = driver units; display-only (live preview / restore)
         CommitBrightness,  // arg = driver units; persist via settings_save
+        CommitUse24h,      // arg = 0/1; persist the 24-hour clock flag
+        CommitTz,          // arg = timezone index; persist + re-apply TZ
+        CommitCycle,       // arg = seconds; persist the auto-cycle interval
         WifiReset,         // erase credentials and reboot into the portal
     };
     Type type;
@@ -97,6 +104,10 @@ constexpr int64_t UI_LONG_PRESS_US = 1000 * 1000LL;
 // render ticks reveal the partial-cell CGRAM glyphs in between.
 constexpr int64_t UI_HOLD_SHOW_US = 500 * 1000LL;
 constexpr int UI_HOLD_BAR_SEGS = 5;
+
+// Auto-cycle: any input pauses page auto-advance for this long; afterwards the
+// pages advance every Settings.cycle_s seconds (skipping unavailable pages).
+constexpr int64_t UI_AUTO_CYCLE_PAUSE_US = 30 * 1000000LL;
 
 // Vertical roll animation (split-flap) for opted-in content changes (TIME
 // ticks): a cell travels its 7 rows plus one blank gap row, one row per

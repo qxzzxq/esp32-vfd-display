@@ -7,6 +7,7 @@
 #include "VFDDisplay.h"
 #include "driver/gpio.h"
 #include "encoder.h"
+#include "esp_app_desc.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -65,12 +66,15 @@ static UiSnapshot build_snapshot() {
     }
     net_get_ap_ssid(s.ap_ssid);
     net_get_ip(s.ip);
+    strlcpy(s.version, esp_app_get_description()->version, sizeof(s.version));
 
     Settings st = settings_get();
     s.has_location = st.lat[0] != '\0' && st.lon[0] != '\0';
     s.bright = st.bright;
     s.use24h = st.use24h != 0;
     s.tz_idx = st.tz_idx;
+    s.tz_count = (uint8_t)tz_count();
+    s.tz_names = tz_names();
     s.cycle_s = st.cycle_s;
     s.msg_seq = web_get_message(s.msg);
     return s;
@@ -84,6 +88,24 @@ static void execute_effect(const UiEffect& e) {
         case UiEffect::Type::CommitBrightness: {
             Settings st = settings_get();
             st.bright = e.arg;
+            settings_save(st);
+            break;
+        }
+        case UiEffect::Type::CommitUse24h: {
+            Settings st = settings_get();
+            st.use24h = e.arg;
+            settings_save(st);
+            break;
+        }
+        case UiEffect::Type::CommitTz: {
+            Settings st = settings_get();
+            st.tz_idx = e.arg;
+            settings_save(st);  // settings_save re-applies the timezone
+            break;
+        }
+        case UiEffect::Type::CommitCycle: {
+            Settings st = settings_get();
+            st.cycle_s = e.arg;
             settings_save(st);
             break;
         }

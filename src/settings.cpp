@@ -38,6 +38,14 @@ const char* tz_name(uint8_t idx) { return TZ_TABLE[idx].name; }
 const char* tz_posix(uint8_t idx) { return TZ_TABLE[idx].posix; }
 int tz_count() { return sizeof(TZ_TABLE) / sizeof(TZ_TABLE[0]); }
 
+const char* const* tz_names() {
+    // Flat name array over the table, built once; the strings are static
+    // literals, so the pointers stay valid for the UI snapshot's lifetime.
+    static const char* names[sizeof(TZ_TABLE) / sizeof(TZ_TABLE[0])];
+    for (int i = 0; i < tz_count(); i++) names[i] = TZ_TABLE[i].name;
+    return names;
+}
+
 static void apply_tz() {
     setenv("TZ", TZ_TABLE[s_settings.tz_idx].posix, 1);
     tzset();

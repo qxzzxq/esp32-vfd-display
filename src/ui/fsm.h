@@ -9,8 +9,10 @@
 
 // The UI state machine: modes (Pages / Menu / Edit), gesture recognition
 // (click vs long-press with hold bar) from raw button edges, menu inactivity
-// timeout, and the render priority chain (hold bar > portal banner >
-// page/menu content).
+// timeout, page auto-cycle (advance every Settings.cycle_s once past the
+// post-input pause), and the render priority chain (hold bar > portal banner >
+// page/menu content). An editing item's sub-screen (edit_subscreen) feeds the
+// crossfade so multi-page overlays like ABOUT dim between their pages.
 //
 // Pure and deterministic: one tick() call consumes one input (UiInput::None
 // on the ~100 ms idle render tick) at a monotonic timestamp against a data
@@ -58,8 +60,9 @@ class UiFsm {
     struct ScreenId {
         Screen kind = Screen::Page;
         uint8_t idx = 0;  // page_ for Page, item_ for Menu; 0 otherwise
+        uint8_t sub = 0;  // editing item's sub-screen (ABOUT page); 0 otherwise
         bool operator==(const ScreenId& o) const {
-            return kind == o.kind && idx == o.idx;
+            return kind == o.kind && idx == o.idx && sub == o.sub;
         }
     };
     ScreenId screen_id(bool hold_visible, const UiSnapshot& s) const;
@@ -73,7 +76,8 @@ class UiFsm {
     Mode mode_ = Mode::Pages;
     uint8_t page_ = 0;
     uint8_t item_ = 0;
-    int64_t last_input_us_ = 0;   // drives the menu inactivity timeout
+    int64_t last_input_us_ = 0;   // drives the menu inactivity timeout + auto-cycle pause
+    int64_t last_cycle_us_ = 0;   // last page auto-advance (or input); auto-cycle interval anchor
     int64_t press_start_us_ = -1; // -1 = button idle (or release swallowed)
     uint32_t last_msg_seq_ = 0;   // detects new POSTs (jump to CUSTOM)
 

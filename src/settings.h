@@ -25,5 +25,8 @@ void settings_save(const Settings& s);   // persist + re-apply timezone
 const char* tz_name(uint8_t idx);
 const char* tz_posix(uint8_t idx);
 int tz_count();
+// tz_count() display-name pointers, for the UI snapshot (the pure UI core
+// looks TZ names up by index without including this header).
+const char* const* tz_names();
 
 #endif

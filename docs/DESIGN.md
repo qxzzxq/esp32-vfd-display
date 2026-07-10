@@ -43,6 +43,13 @@ own their data and expose copy-out getters — no global state struct, no cross-
 - **`settings.{h,cpp}`** — NVS-backed `Settings` struct + static timezone table
   (~12–15 entries: display name ≤10 chars + POSIX TZ string). `settings_get()` (copy under
   mutex), `settings_save()` (diff-write keys, re-apply `setenv("TZ")+tzset()`).
+  **DST is automatic:** each table entry carries the full POSIX DST rule
+  (e.g. `CET-1CEST,M3.5.0,M10.5.0/3`), not a fixed offset. The RTC is kept in
+  UTC, so `localtime_r()` (called fresh each render tick) re-derives whether DST
+  is currently active from the rule — the clock shifts by an hour at the
+  transition with no dedicated code, and zones without DST (UTC, `CST-8`,
+  `JST-9`) simply omit the rule. Caveat: the rules are hardcoded, so a region
+  changing its DST policy needs a firmware update (no live tz database on device).
 - **`sensors.{h,cpp}`** — I2C master (`esp_driver_i2c`, `i2c_master.h`) + minimal AHT20 and
   BMP280 drivers. `sensors_read()` blocking ~90 ms, called only by the worker task;
   `sensors_get(&tC, &rh, &hPa)` returns false if never read / last read failed.
@@ -169,8 +176,9 @@ pauses auto-cycle for 30 s):
 
 **Encoder semantics — normal mode**: rotate = page switch. Long-press (≥1.0 s, fires
 while held; `MENU       ==   ` progress bar appears after 0.5 s) = enter menu. Click on
-the pages is unassigned. Device status (IP address / `PORTAL 192.168.4.1` /
-`WIFI CONNECTING`) is shown via the `>STATUS` menu item (M7).
+the pages is unassigned. Device info (the STA IP / `AP 192.168.4.1` in portal
+mode / `WIFI CONNECTING`, plus the firmware version) is shown via the `>ABOUT`
+menu item (M7).
 
 **Menu**: rotate = move between items; click = enter edit (the cursor moves to the
 value side, e.g. ` BRIGHT      >12`); in edit rotate = change value, click = confirm →
@@ -186,7 +194,7 @@ advances one full cell per render — finer ticks reveal the partial-cell glyphs
 >TZ       PARIS      rotates timezone table
 >CYCLE      10s      OFF/5/10/30/60 s
 >WIFI RESET          click → "CLICK=CONFIRM" → click again → erase creds + reboot; rotate = cancel
->STATUS              click → IP address / WiFi state for 3 s
+>ABOUT               click → overlay; rotate pages IP/WiFi state <-> firmware version (crossfaded); click exits
 >EXIT
 ```
 
@@ -318,12 +326,19 @@ pre-refactor `ui.cpp`, pinning firmware-visible behavior across the UI refactor.
   RAM-only by design (cleared on reboot — no NVS wear). Not yet exercised by eye:
   marquee cadence/wrap gap on the VFD, auto-advance when the shown message is
   cleared.
-- **M7 — Polish**: full menu (24H, TZ, CYCLE, STATUS), auto-cycle, portal
-  lat/lon/TZ fields, CGRAM glyphs (bar cells + arrow cursor — done, v0.9.0),
-  vertical-roll animation (TIME digits — done, v0.10.0; a page-change roll was
-  tried and removed after hardware testing, replaced by a dimming crossfade for
-  page transitions — done, v0.11.0; see "Animations"). *Verify:* overnight
-  soak — no reboots, clock correct, heap stable (via /api/status).
+- **M7 — Polish**: portal lat/lon/TZ fields (done, M4 portal), CGRAM glyphs
+  (bar cells + arrow cursor — done, v0.9.0), vertical-roll animation (TIME
+  digits — done, v0.10.0; a page-change roll was tried and removed after
+  hardware testing, replaced by a dimming crossfade for page transitions —
+  done, v0.11.0; see "Animations"), full menu (24H, TZ, CYCLE, ABOUT) +
+  page auto-cycle (done, v0.13.0). The ABOUT item borrows the edit sub-mode as a
+  two-page overlay (IP/WiFi state and firmware version); rotation pages between
+  them and they crossfade via `MenuItem::edit_subscreen` folded into
+  `UiFsm::screen_id`. Auto-cycle lives in `UiFsm` (advance every `cycle_s` once
+  past a 30 s post-input pause, skipping unavailable pages) — both covered by the
+  `test_ui_menu`/`test_ui_fsm` suites. *Remaining hardware verify:* overnight
+  soak — no reboots, clock correct, heap stable (via /api/status); then bump to
+  v1.0.0.
 
 ## Open questions / risks
 
